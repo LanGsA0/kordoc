@@ -126,8 +126,10 @@ export function normalizeItems(rawItems: PdfTextItem[]): NormItem[] {
       continue
     }
 
-    const scaleY = Math.abs(i.transform[3])
-    const scaleX = Math.abs(i.transform[0])
+    // 회전 텍스트 대응: 90° 회전 시 [0,s,-s,0] 꼴로 대각 성분이 0이 되므로
+    // 열벡터 노름으로 실제 글리프 스케일을 구한다 (사이드탭·회전 표가 hidden 오분류되던 버그)
+    const scaleX = Math.hypot(i.transform[0], i.transform[1])
+    const scaleY = Math.hypot(i.transform[2], i.transform[3])
     const fontSize = Math.round(Math.max(scaleY, scaleX))
     const w = Math.round(i.width)
     const h = Math.round(i.height)
