@@ -3,7 +3,8 @@
 // hwpx-ref 패턴 이식: 포맷의 원본 XML에서 텍스트 유닛을 독립 추출해 kordoc md와 정렬.
 //
 // 유닛 추출 (파서와 코드 0% 공유):
-//   docx : word/document.xml 본문 w:p 문단 (w:t 연결, w:instrText 등 필드코드 제외)
+//   docx : word/document.xml 본문 w:p 문단 (w:t 연결, w:instrText 등 필드코드 제외,
+//          mc:Fallback 스킵 — Choice 이중 렌더, 텍스트박스 문단은 별도 유닛)
 //   xlsx : xl/worksheets/*.xml 셀 — 문자열 셀(s/inlineStr/str)은 str 유닛,
 //          숫자 셀은 num 유닛으로 분리 채점 (서식 적용 숫자·날짜는 표기 차이가 정상이라
 //          str만 게이트, num은 보고)
@@ -26,15 +27,15 @@ const gateMode = args.includes("--gate")
 const verbose = args.includes("--verbose")
 const docFilter = (args.find(a => a.startsWith("--doc=")) ?? "").split("=")[1] ?? null
 
-// 게이트 = 무후퇴 플로어 (2026-07-03 기준선: docx 0.929308 / xlsxStr 0.989366 /
-// hml 0.995974). 세션 중 파서 픽스 2건 반영 후 값: ①한셀(HCell) xlsx 접두 네임스페이스
-// 인식 (파싱 실패 2건 → 0) ②HML P 앵커 표 소실 + 셀 중첩표 평탄화 (hml 0.231 → 0.996).
-// 남은 미달 백로그 (파서 실손실 확인됨, 다음 세션):
-//   docx: niied 2번째 표(귀국신고서) 통째 드롭(0.675) · kats mc:AlternateContent
-//         Choice/Fallback 이중 텍스트 정리(0.917) · arko 미상(0.880)
-//   xlsx: goe-배분예정액 다중시트 일부 셀 누락(str 0.984/num 0.971 — 시트 열거 검증 필요)
-//   hml : bizinfo 0.973 (글상자/도형 텍스트 추정)
-const GATES = { parseErrors: 0, docxRecall: 0.92, xlsxStrRecall: 0.985, hmlRecall: 0.995 }
+// 게이트 = 무후퇴 플로어 (2026-07-03 2차 상향, 2회 연속 측정 동일 확인:
+// docx 0.998903 / xlsxStr 1.0 / hml 0.995974).
+// 상향 근거 픽스: ①docx 병합표 그리드 배치 — 밀집 배열을 그리드로 오독해 gridSpan 뒤
+// 셀 유실 (niied 0.675→1.0) ②docx 텍스트박스(txbxContent) 수집 + Fallback 스킵
+// (kats 0.917→0.9985, arko 0.880→0.9998) ③추출기 시트 순서 사전순→워크북 순서 미러
+// (goe str 0.984→1.0 — 파서 무죄, 추출기 순서 비대칭이었음)
+// 이전 세대 픽스: 한셀(HCell) xlsx 접두 네임스페이스 인식 · HML P 앵커 표 소실 해소.
+// 잔여 미달 (수용): kats "형용사또는명사" 소량 · hml bizinfo 0.973 (글상자/도형 텍스트)
+const GATES = { parseErrors: 0, docxRecall: 0.998, xlsxStrRecall: 0.999, hmlRecall: 0.995 }
 
 // 유닛 정렬 상한 — 초대형 스프레드시트(개표결과 25만+ 셀)는 align이 수십 분 걸려
 // recall 모수에서 제외(스모크만). 초과 문서는 unitCapped로 보고.
@@ -52,36 +53,98 @@ function textOf(node, out = []) {
   return out
 }
 
-/** docx: 본문 w:p → 유닛. 필드 코드(instrText)·삭제 추적(delText)은 제외 */
+/** docx: 본문 w:p → 유닛. 필드 코드(instrText)·삭제 추적(delText)은 제외.
+ *  파서 경계 미러: mc:Fallback은 Choice와 같은 텍스트박스의 이중 렌더라 스킵,
+ *  텍스트박스(txbxContent) 문단은 앵커 문단과 별도 유닛 (파서가 별도 블록 출력) */
 async function docxUnits(buf) {
   const zip = await JSZip.loadAsync(buf)
   const doc = zip.file("word/document.xml")
   if (!doc) throw new Error("word/document.xml 없음")
   const rootNode = parseXmlLite(await doc.async("string"))
   const units = []
+  const paraText = p => {
+    const parts = []
+    const walkRun = n => {
+      for (const c of n.children) {
+        if (typeof c === "string") continue
+        if (c.tag === "t") parts.push(textOf(c).join(""))
+        else if (c.tag === "tab") parts.push(" ")
+        else if (c.tag === "br" || c.tag === "cr") parts.push("\n")
+        else if (c.tag === "instrtext" || c.tag === "deltext" || c.tag === "fldchar") continue
+        else if (c.tag === "fallback" || c.tag === "txbxcontent") continue
+        else walkRun(c)
+      }
+    }
+    walkRun(p)
+    return parts.join("").trim()
+  }
+  // 텍스트박스 문단 — 파서 collectTextboxParagraphs 미러 (txbxContent 하위 p만, Fallback 스킵)
+  const walkTxbx = (node, inTx) => {
+    for (const ch of node.children) {
+      if (typeof ch === "string") continue
+      if (ch.tag === "fallback") continue
+      const now = inTx || ch.tag === "txbxcontent"
+      if (now && ch.tag === "p") {
+        const t = paraText(ch)
+        if (t) units.push(t)
+      }
+      walkTxbx(ch, now)
+    }
+  }
   const walkP = node => {
     for (const ch of node.children) {
       if (typeof ch === "string") continue
+      if (ch.tag === "fallback") continue
       if (ch.tag === "p") {
-        const parts = []
-        const walkRun = n => {
-          for (const c of n.children) {
-            if (typeof c === "string") continue
-            if (c.tag === "t") parts.push(textOf(c).join(""))
-            else if (c.tag === "tab") parts.push(" ")
-            else if (c.tag === "br" || c.tag === "cr") parts.push("\n")
-            else if (c.tag === "instrtext" || c.tag === "deltext" || c.tag === "fldchar") continue
-            else walkRun(c)
-          }
-        }
-        walkRun(ch)
-        const t = parts.join("").trim()
+        const t = paraText(ch)
         if (t) units.push(t)
+        walkTxbx(ch, false) // 문단 안 텍스트박스 문단 — 별도 유닛
       } else walkP(ch)
     }
   }
   walkP(rootNode)
   return { units }
+}
+
+/** 시트 파일 순서 — 파서 미러 (workbook.xml 시트 순서 + rels 매핑, 실패 시 숫자 정렬).
+ *  Object.keys().sort()는 사전순이라 sheet10이 sheet2 앞에 와 유닛 순서가 md와 어긋난다
+ *  (align은 순서 민감 — goe 22시트에서 거짓 miss) */
+async function orderedSheetPaths(zip) {
+  const numeric = Object.keys(zip.files)
+    .filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+    .sort((a, b) => +a.match(/(\d+)\.xml$/)[1] - +b.match(/(\d+)\.xml$/)[1])
+  try {
+    const relMap = new Map()
+    const walkRel = node => {
+      for (const ch of node.children) {
+        if (typeof ch === "string") continue
+        if (ch.tag === "relationship") relMap.set(ch.attrs.id, ch.attrs.target)
+        else walkRel(ch)
+      }
+    }
+    walkRel(parseXmlLite(await zip.file("xl/_rels/workbook.xml.rels").async("string")))
+    const sheets = []
+    const walkSheet = node => {
+      for (const ch of node.children) {
+        if (typeof ch === "string") continue
+        if (ch.tag === "sheet") sheets.push(ch)
+        else walkSheet(ch)
+      }
+    }
+    walkSheet(parseXmlLite(await zip.file("xl/workbook.xml").async("string")))
+    const paths = sheets
+      .map((el, i) => {
+        let t = relMap.get(el.attrs.id)
+        if (!t) return `xl/worksheets/sheet${i + 1}.xml`
+        if (t.startsWith("/")) t = t.slice(1)
+        else if (!t.startsWith("xl/")) t = `xl/${t}`
+        return t
+      })
+      .filter(p => zip.file(p))
+    return paths.length ? paths : numeric
+  } catch {
+    return numeric
+  }
 }
 
 /** xlsx: 셀 값 유닛 — 문자열/숫자 분리 */
@@ -101,7 +164,7 @@ async function xlsxUnits(buf) {
     walkSi(sstRoot)
   }
   const strUnits = [], numUnits = []
-  const sheetNames = Object.keys(zip.files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort()
+  const sheetNames = await orderedSheetPaths(zip)
   for (const name of sheetNames) {
     const sheetRoot = parseXmlLite(await zip.file(name).async("string"))
     const walkC = node => {
