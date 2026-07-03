@@ -8,11 +8,11 @@
 import JSZip from "jszip"
 import { DOMParser } from "@xmldom/xmldom"
 import type {
-  IRBlock, IRTable, IRCell, DocumentMetadata, InternalParseResult,
+  CellContext, IRBlock, DocumentMetadata, InternalParseResult,
   ParseOptions, ParseWarning, ExtractedImage, InlineStyle,
 } from "../types.js"
 import { KordocError, precheckZipSize, stripDtd } from "../utils.js"
-import { blocksToMarkdown } from "../table/builder.js"
+import { blocksToMarkdown, buildTable } from "../table/builder.js"
 import { ommlElementToLatex, isDisplayMath } from "./equation.js"
 
 /** ZIP 압축 해제 누적 최대 크기 (100MB) — ZIP bomb 방지 */
@@ -391,6 +391,31 @@ function parseParagraph(
 
 // ─── 테이블 파싱 ────────────────────────────────────────
 
+/**
+ * 문단 하위 텍스트박스(w:txbxContent) 문단 수집.
+ * mc:AlternateContent는 Choice(drawing)와 Fallback(pict)이 같은 텍스트박스를
+ * 이중으로 담으므로 Fallback 서브트리는 스킵한다. 한 번의 워크로 중첩
+ * 텍스트박스·텍스트박스 안 표 셀 문단까지 문서 순서대로 수집한다.
+ */
+function collectTextboxParagraphs(node: Element, inTxbx = false, out: Element[] = [], depth = 0): Element[] {
+  if (depth > 40) return out
+  for (const el of effectiveChildElements(node)) {
+    if (matchesLocal(el, "Fallback")) continue
+    const nowIn = inTxbx || matchesLocal(el, "txbxContent")
+    if (nowIn && matchesLocal(el, "p")) out.push(el)
+    collectTextboxParagraphs(el, nowIn, out, depth + 1)
+  }
+  return out
+}
+
+interface RawDocxCell {
+  /** 그리드 열 주소 — gridSpan 누적 합 (배열 인덱스는 span 앞에서 어긋난다) */
+  col: number
+  colSpan: number
+  vMerge: "restart" | "continue" | null
+  text: string
+}
+
 function parseTable(
   tbl: Element,
   styles: Map<string, StyleInfo>,
@@ -401,87 +426,83 @@ function parseTable(
   const trElements = getChildElements(tbl, "tr")
   if (trElements.length === 0) return null
 
-  const rows: IRCell[][] = []
-  let maxCols = 0
-
+  const rawRows: RawDocxCell[][] = []
   for (const tr of trElements) {
-    const tcElements = getChildElements(tr, "tc")
-    const row: IRCell[] = []
-
-    for (const tc of tcElements) {
-      // 셀 속성
+    const row: RawDocxCell[] = []
+    let col = 0
+    for (const tc of getChildElements(tr, "tc")) {
       let colSpan = 1
-      let rowSpan = 1
+      let vMerge: RawDocxCell["vMerge"] = null
       const tcPrEls = getChildElements(tc, "tcPr")
       if (tcPrEls.length > 0) {
         const gridSpanEls = getChildElements(tcPrEls[0], "gridSpan")
         if (gridSpanEls.length > 0) {
-          colSpan = parseInt(getAttr(gridSpanEls[0], "val") ?? "1", 10)
+          colSpan = parseInt(getAttr(gridSpanEls[0], "val") ?? "1", 10) || 1
         }
         const vMergeEls = getChildElements(tcPrEls[0], "vMerge")
         if (vMergeEls.length > 0) {
-          const val = getAttr(vMergeEls[0], "val")
-          if (val !== "restart" && val !== null) {
-            // 병합 계속 셀 — 스킵 마커
-            row.push({ text: "", colSpan, rowSpan: 0 })
-            continue
-          }
+          // val 없는 <w:vMerge/>는 계속 셀 (OOXML 기본값)
+          vMerge = getAttr(vMergeEls[0], "val") === "restart" ? "restart" : "continue"
         }
       }
-
-      // 셀 텍스트
-      const cellTexts: string[] = []
-      const pElements = getChildElements(tc, "p")
-      for (const p of pElements) {
-        const block = parseParagraph(p, styles, numbering, footnotes, rels)
-        if (block?.text) cellTexts.push(block.text)
-      }
-
-      row.push({ text: cellTexts.join("\n"), colSpan, rowSpan })
+      const text = vMerge === "continue"
+        ? ""
+        : collectCellText(tc, styles, numbering, footnotes, rels, 0).join("\n")
+      row.push({ col, colSpan, vMerge, text })
+      col += colSpan
     }
-    rows.push(row)
-    if (row.length > maxCols) maxCols = row.length
+    rawRows.push(row)
   }
 
-  // vMerge rowSpan 후처리: restart에서 아래로 연속되는 rowSpan=0 카운트
-  for (let c = 0; c < maxCols; c++) {
-    for (let r = 0; r < rows.length; r++) {
-      const cell = rows[r][c]
-      if (!cell || cell.rowSpan === 0) continue
-      let span = 1
-      for (let nr = r + 1; nr < rows.length; nr++) {
-        if (rows[nr][c]?.rowSpan === 0) span++
-        else break
-      }
-      cell.rowSpan = span
-    }
-  }
+  // vMerge 계속 셀은 같은 그리드 열의 시작 셀 rowSpan으로 흡수
+  const cellRows: CellContext[][] = rawRows.map((row, r) =>
+    row
+      .filter(cell => cell.vMerge !== "continue")
+      .map(cell => {
+        let rowSpan = 1
+        if (cell.vMerge === "restart") {
+          for (let nr = r + 1; nr < rawRows.length; nr++) {
+            if (!rawRows[nr].some(nc => nc.col === cell.col && nc.vMerge === "continue")) break
+            rowSpan++
+          }
+        }
+        return { text: cell.text, colSpan: cell.colSpan, rowSpan, colAddr: cell.col, rowAddr: r }
+      })
+  )
 
-  // rowSpan=0인 placeholder 제거
-  const cleanRows: IRCell[][] = []
-  for (const row of rows) {
-    const clean = row.filter(cell => cell.rowSpan !== 0)
-    cleanRows.push(clean)
-  }
-
-  // 빈 테이블 체크
-  if (cleanRows.length === 0) return null
-
-  // 컬럼 수 재계산
-  let cols = 0
-  for (const row of cleanRows) {
-    let c = 0
-    for (const cell of row) c += cell.colSpan
-    if (c > cols) cols = c
-  }
-
-  const table: IRTable = {
-    rows: cleanRows.length,
-    cols,
-    cells: cleanRows,
-    hasHeader: cleanRows.length > 1,
-  }
+  const table = buildTable(cellRows)
+  if (table.rows === 0 || table.cols === 0) return null
   return { type: "table", table }
+}
+
+/** 셀 내용 수집 — 문단 + 셀 안 중첩 표 텍스트 평탄화 (hml과 동일 규약, 문서 순서 유지) */
+function collectCellText(
+  tc: Element,
+  styles: Map<string, StyleInfo>,
+  numbering: Map<string, Map<number, NumberingInfo>>,
+  footnotes: Map<string, string>,
+  rels: Map<string, string>,
+  depth: number,
+): string[] {
+  const parts: string[] = []
+  if (depth > 20) return parts
+  for (const el of effectiveChildElements(tc)) {
+    if (matchesLocal(el, "p")) {
+      const block = parseParagraph(el, styles, numbering, footnotes, rels)
+      if (block?.text) parts.push(block.text)
+      for (const tp of collectTextboxParagraphs(el)) {
+        const tb = parseParagraph(tp, styles, numbering, footnotes, rels)
+        if (tb?.text) parts.push(tb.text)
+      }
+    } else if (matchesLocal(el, "tbl")) {
+      for (const tr of getChildElements(el, "tr")) {
+        for (const nestedTc of getChildElements(tr, "tc")) {
+          parts.push(...collectCellText(nestedTc, styles, numbering, footnotes, rels, depth + 1))
+        }
+      }
+    }
+  }
+  return parts
 }
 
 // ─── 이미지 추출 ────────────────────────────────────────
@@ -622,6 +643,11 @@ export async function parseDocxDocument(
     if (localName === "p") {
       const block = parseParagraph(el, styles, numbering, footnotes, rels)
       if (block) blocks.push(block)
+      // 텍스트박스(도형 안 글) 문단 — 앵커 문단 뒤에 별도 블록으로
+      for (const tp of collectTextboxParagraphs(el)) {
+        const tb = parseParagraph(tp, styles, numbering, footnotes, rels)
+        if (tb) blocks.push(tb)
+      }
     } else if (localName === "tbl") {
       const block = parseTable(el, styles, numbering, footnotes, rels)
       if (block) blocks.push(block)

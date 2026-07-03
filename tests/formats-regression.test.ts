@@ -1,4 +1,4 @@
-/** formats 코퍼스에서 발굴된 회귀 케이스 — 한셀 xlsx 네임스페이스 접두, HML 표 소실 */
+/** formats 코퍼스에서 발굴된 회귀 케이스 — 한셀 xlsx 네임스페이스 접두, HML 표 소실, DOCX 병합표 셀 유실 */
 import { describe, it } from "node:test"
 import assert from "node:assert"
 import JSZip from "jszip"
@@ -53,6 +53,65 @@ describe("HWPML — P 앵커 표와 중첩표 평탄화", () => {
       assert.ok(res.markdown.includes("셀A"), "P 앵커 표의 셀")
       assert.ok(res.markdown.includes("박스 안내문"), "셀 내 중첩표 텍스트 평탄화")
       assert.ok(!res.markdown.includes("[중첩 테이블]"), "구 마커 미사용")
+    }
+  })
+})
+
+/** DOCX: gridSpan 셀 뒤 셀이 그리드 열 어긋남으로 유실되던 병합표 (niied 신고서 회귀) */
+async function makeMergedDocx(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file("[Content_Types].xml", `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`)
+  zip.file("_rels/.rels", `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`)
+  const tc = (inner: string, pr = "") => `<w:tc>${pr ? `<w:tcPr>${pr}</w:tcPr>` : ""}${inner}</w:tc>`
+  const p = (text: string) => `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`
+  const nestedTbl = `<w:tbl><w:tr>${tc(p("중첩내용"))}</w:tr></w:tbl>`
+  const tbl = `<w:tbl>` +
+    // row0: [2span 라벨][1span] — gridSpan 뒤 셀이 배열 인덱스≠그리드 열로 유실되던 패턴
+    `<w:tr>${tc(p("라벨"), `<w:gridSpan w:val="2"/>`)}${tc(p("스팬뒤내용"))}</w:tr>` +
+    // row1~2: 첫 열 세로 병합 (val 없는 <w:vMerge/> = 계속 셀)
+    `<w:tr>${tc(p("세로병합"), `<w:vMerge w:val="restart"/>`)}${tc(p("b2"))}${tc(p("c2"))}</w:tr>` +
+    `<w:tr>${tc("<w:p/>", `<w:vMerge/>`)}${tc(p("b3"))}${tc(nestedTbl + "<w:p/>")}</w:tr>` +
+    `</w:tbl>`
+  zip.file("word/document.xml", `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${tbl}</w:body></w:document>`)
+  return Buffer.from(await zip.generateAsync({ type: "uint8array" }))
+}
+
+describe("DOCX — 병합표 그리드 배치", () => {
+  it("gridSpan 뒤 셀·vMerge 병합·셀 안 중첩표 텍스트가 모두 출력된다", async () => {
+    const res = await parse(await makeMergedDocx(), { filename: "merged.docx" })
+    assert.equal(res.success, true, `파싱 실패: ${res.success === false ? res.error : ""}`)
+    if (res.success) {
+      assert.ok(res.markdown.includes("스팬뒤내용"), "gridSpan 셀 뒤 셀 유실")
+      assert.ok(res.markdown.includes("b2") && res.markdown.includes("c2") && res.markdown.includes("b3"), "일반 셀")
+      assert.ok(res.markdown.includes(`rowspan="2">세로병합`), "vMerge 계속 셀이 rowSpan으로 흡수")
+      assert.ok(res.markdown.includes("중첩내용"), "셀 안 중첩표 평탄화")
+    }
+  })
+})
+
+/** DOCX: mc:AlternateContent 텍스트박스 — Choice(drawing)와 Fallback(pict)이 같은 내용 이중 수록 (kats 회귀) */
+async function makeTextboxDocx(): Promise<Buffer> {
+  const zip = new JSZip()
+  zip.file("[Content_Types].xml", `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`)
+  zip.file("_rels/.rels", `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`)
+  const txbx = (text: string) => `<w:txbxContent><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:txbxContent>`
+  const alt =
+    `<mc:AlternateContent>` +
+    `<mc:Choice Requires="wps"><w:drawing><wp:anchor><a:graphic><a:graphicData><wps:wsp><wps:txbx>${txbx("박스글")}</wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>` +
+    `<mc:Fallback><w:pict><v:shape><v:textbox>${txbx("박스글")}</v:textbox></v:shape></w:pict></mc:Fallback>` +
+    `</mc:AlternateContent>`
+  const body = `<w:p><w:r><w:t>앵커문단</w:t></w:r><w:r>${alt}</w:r></w:p>`
+  zip.file("word/document.xml", `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:v="urn:schemas-microsoft-com:vml"><w:body>${body}</w:body></w:document>`)
+  return Buffer.from(await zip.generateAsync({ type: "uint8array" }))
+}
+
+describe("DOCX — 텍스트박스(AlternateContent)", () => {
+  it("텍스트박스 내용은 정확히 1회 출력된다 (유실도, Choice/Fallback 이중도 아님)", async () => {
+    const res = await parse(await makeTextboxDocx(), { filename: "txbx.docx" })
+    assert.equal(res.success, true, `파싱 실패: ${res.success === false ? res.error : ""}`)
+    if (res.success) {
+      assert.ok(res.markdown.includes("앵커문단"), "앵커 문단")
+      assert.equal(res.markdown.split("박스글").length - 1, 1, "텍스트박스 내용 정확히 1회")
     }
   })
 })
