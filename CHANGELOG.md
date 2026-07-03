@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-07-03
+
+### Added
+
+- **Markdown display math → HWPX native 수식 생성** — `$$ … $$` 블록을
+  `<hp:equation>`(EqEdit script)으로 생성. 지원: `\frac`·`\sqrt[n]`·첨자/위첨자·
+  그리스 문자·적분/극한·화살표·관계 연산자·`matrix`/`pmatrix`/`bmatrix`·
+  `\left(`/`\left\{` 구분자·`\text`/`\mathrm` 리터럴. 생성 어휘는 읽기
+  (`hmlToLatex`) 토큰맵과 왕복 정합 — 전 토큰 고정점 테스트로 잠금.
+  (#38, #39 — @leehuiso 기여 + 리뷰 확정 8건 수술)
+
+### Fixed
+
+- **`$$` 스캐너** — 닫히지 않은 `$$`가 문서 나머지를 통삼킴하던 것을 일반 문단
+  폴백으로, 닫는 `$$` 뒤 잔여 텍스트 무음 소실을 문단 보존으로 수정. 빈 줄/
+  코드펜스 경계에서 멀티라인 수집 중단, 이스케이프 `\$$` 여닫이 제외
+- **수식 변환기 가드** — 중괄호 폭탄·`\frac` 체인의 스택 오버플로를 깊이 64
+  리터럴 폴백으로, 초장문 입력을 소스 10K 상한으로 차단 (MCP/CLI 비신뢰 입력)
+- **왕복 비대칭** — `\pm`/`\cdot`/`\ast`/`\leftarrow`가 재파싱 불가 토큰으로
+  나가던 것 수정(읽기 맵에 `+-`·`cdot` 추가 포함), `RIGHT )` 공백 접합 제거,
+  `\left\{` 백슬래시 잔재 수정, 첨자 예약어를 토큰맵에서 도출해 따옴표 누수
+  해소(읽기 쪽 `"…"` → `\text{…}` 언쿼트 동반)
+- **공문 모드** — 항목 사이에 낀 수식이 번호 run을 끊어 번호가 리셋/소멸하던
+  것 수정 (표와 동일한 run 연속 예외)
+
+### Bench
+
+- roundtrip: equation·law(법령 줄 무결성) fixture + `equationErrors`/`lineErrors`
+  게이트 — 코퍼스에 `$$`가 없어 무감이던 수식 클래스·조문 줄바꿈 클래스 고정
+- fuzz: `markdownToHwpx` mdgen 60런(crash/hang/slow/genInvalid) 편입
+
 ## [3.8.4] - 2026-07-03
 
 ### Fixed
