@@ -144,7 +144,9 @@ export function convertTableToText(rows: CellContext[][]): string {
 /** 마크다운 GFM 특수문자 이스케이프 — remark-gfm 오해석 방지 */
 function escapeGfm(text: string): string {
   // ~ → \~ (GFM strikethrough 방지)
-  return text.replace(/~/g, "\\~")
+  // * → \* (emphasis/HR 방지 — 개인정보 마스킹 별표 런 "******"이 md 수평선/볼드로
+  //   소비되는 것을 차단. 2026-07-03, markdown-units.ts escapeGfm과 동일 유지)
+  return text.replace(/([~*])/g, "\\$1")
 }
 
 /** HWP 자동생성 도형/개체 대체텍스트 정규식 — 한컴오피스가 삽입하는 모든 알려진 패턴 */

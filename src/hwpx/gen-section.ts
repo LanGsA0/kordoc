@@ -32,7 +32,8 @@ function generateSecPr(gongmun: ResolvedGongmun | null): string {
         footer: 0,
       }
     : { top: 8504, bottom: 4252, left: 5670, right: 4252, header: 2835, footer: 2835 }
-  return `<hp:secPr textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">` +
+  // outlineShapeIDRef="1" — 헤딩 paraPr(OUTLINE)이 쓰는 빈 서식 numbering (gen-header buildNumberings)
+  return `<hp:secPr textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" outlineShapeIDRef="1" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">` +
     `<hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/>` +
     `<hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>` +
     `<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>` +
@@ -125,7 +126,11 @@ export function blocksToSectionXml(
         }
         const indent = block.indent || 0
         let marker: string
-        if (block.ordered) {
+        if (block.marker) {
+          // 원본 마커 보존 — "2." 번호 재시작·"-"→"·" 기호 변형 방지 (왕복 충실도)
+          marker = `${block.marker} `
+          prevWasOrdered = !!block.ordered
+        } else if (block.ordered) {
           // 러닝 카운터: indent 레벨별로 증가. 하위 레벨(더 깊은 indent)은 별도 세퀀스.
           orderedCounters[indent] = (orderedCounters[indent] || 0) + 1
           // 상위 레벨 번호가 바뀌면 하위는 자동 리셋되어야 함 — 한 레벨 위로 올라갈 때 하위 카운터 초기화

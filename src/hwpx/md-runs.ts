@@ -35,6 +35,8 @@ export interface MdBlock {
   lang?: string
   ordered?: boolean
   indent?: number
+  /** 리스트 원본 마커 ("2." "3)" "-" "*" 등) — 왕복 시 번호 재시작·기호 변형 방지 */
+  marker?: string
 }
 
 export function parseMarkdownToBlocks(md: string): MdBlock[] {
@@ -125,7 +127,7 @@ export function parseMarkdownToBlocks(md: string): MdBlock[] {
     if (listMatch) {
       const indent = Math.floor(listMatch[1].length / 2)
       const ordered = /\d/.test(listMatch[2])
-      blocks.push({ type: "list_item", text: listMatch[3].trim(), ordered, indent })
+      blocks.push({ type: "list_item", text: listMatch[3].trim(), ordered, indent, marker: listMatch[2] })
       i++; continue
     }
 
@@ -147,6 +149,14 @@ interface InlineSpan {
 }
 
 export function parseInlineMarkdown(text: string): InlineSpan[] {
+  // 마크다운 백슬래시 이스케이프(\* \~ \| 등 — kordoc 파서 escapeGfm 출력 포함)를
+  // 센티널로 마스킹 — 강조/링크 정규식이 이스케이프된 문자를 델리미터로 오인해
+  // 소비하는 것을 차단. span 조립 후 리터럴로 복원한다.
+  const literals: string[] = []
+  text = text.replace(/\x00/g, "").replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, (_, c: string) => {
+    literals.push(c)
+    return `\x00${literals.length - 1}\x00`  // 인덱스 내장 — 전처리가 일부 구간을 버려도 정렬 유지
+  })
   // 전처리: 마크다운 링크/이미지 → 텍스트만 추출
   text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")   // ![alt](url) → alt
   text = text.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_, t, u) => t || u) // [text](url) → text or url
@@ -180,6 +190,15 @@ export function parseInlineMarkdown(text: string): InlineSpan[] {
   }
   if (spans.length === 0) {
     spans.push({ text, bold: false, italic: false, code: false })
+  }
+  // 센티널 → 리터럴 복원. 인라인 코드 안은 CommonMark처럼 이스케이프 처리가
+  // 없으므로 백슬래시까지 원문 그대로 되살린다.
+  for (const span of spans) {
+    if (!span.text.includes("\x00")) continue
+    span.text = span.text.replace(/\x00(\d+)\x00/g, (_, i) => {
+      const c = literals[+i] ?? ""
+      return span.code ? "\\" + c : c
+    })
   }
   return spans
 }

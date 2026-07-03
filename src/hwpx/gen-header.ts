@@ -82,10 +82,10 @@ function buildParaProperties(gongmun: ResolvedGongmun | null): string {
   if (!gongmun) {
     const base = [
       paraPr(0),
-      paraPr(1, { align: "LEFT", spaceBefore: 800, spaceAfter: 200, lineSpacing: 180 }),
-      paraPr(2, { align: "LEFT", spaceBefore: 600, spaceAfter: 150, lineSpacing: 170 }),
-      paraPr(3, { align: "LEFT", spaceBefore: 400, spaceAfter: 100, lineSpacing: 160 }),
-      paraPr(4, { align: "LEFT", spaceBefore: 300, spaceAfter: 100, lineSpacing: 160 }),
+      paraPr(1, { align: "LEFT", spaceBefore: 800, spaceAfter: 200, lineSpacing: 180, outlineLevel: 0 }),
+      paraPr(2, { align: "LEFT", spaceBefore: 600, spaceAfter: 150, lineSpacing: 170, outlineLevel: 1 }),
+      paraPr(3, { align: "LEFT", spaceBefore: 400, spaceAfter: 100, lineSpacing: 160, outlineLevel: 2 }),
+      paraPr(4, { align: "LEFT", spaceBefore: 300, spaceAfter: 100, lineSpacing: 160, outlineLevel: 3 }),
       paraPr(5, { align: "LEFT", lineSpacing: 130, indent: 400 }),
       paraPr(6, { align: "LEFT", lineSpacing: 150, indent: 600 }),
       paraPr(7, { align: "LEFT", lineSpacing: 160, indent: 600 }),
@@ -97,10 +97,10 @@ function buildParaProperties(gongmun: ResolvedGongmun | null): string {
   // 공문서 모드 전 문단 어절 단위 줄바꿈(keepWord) — 한글이 단어 중간에서 끊기지 않음
   const base = [
     paraPr(0, { lineSpacing: ls, keepWord: true }),
-    paraPr(1, { align: titleAlign, spaceBefore: 400, spaceAfter: 400, lineSpacing: ls, keepWord: true }),
-    paraPr(2, { align: "LEFT", spaceBefore: 600, spaceAfter: 150, lineSpacing: ls, keepWord: true }),
-    paraPr(3, { align: "LEFT", spaceBefore: 400, spaceAfter: 100, lineSpacing: ls, keepWord: true }),
-    paraPr(4, { align: "LEFT", spaceBefore: 300, spaceAfter: 100, lineSpacing: ls, keepWord: true }),
+    paraPr(1, { align: titleAlign, spaceBefore: 400, spaceAfter: 400, lineSpacing: ls, keepWord: true, outlineLevel: 0 }),
+    paraPr(2, { align: "LEFT", spaceBefore: 600, spaceAfter: 150, lineSpacing: ls, keepWord: true, outlineLevel: 1 }),
+    paraPr(3, { align: "LEFT", spaceBefore: 400, spaceAfter: 100, lineSpacing: ls, keepWord: true, outlineLevel: 2 }),
+    paraPr(4, { align: "LEFT", spaceBefore: 300, spaceAfter: 100, lineSpacing: ls, keepWord: true, outlineLevel: 3 }),
     paraPr(5, { align: "LEFT", lineSpacing: 130, indent: 400, keepWord: true }),
     paraPr(6, { align: "LEFT", lineSpacing: ls, indent: 600, keepWord: true }),
     paraPr(7, { align: "LEFT", lineSpacing: ls, indent: 600, keepWord: true }),
@@ -115,6 +115,22 @@ function buildParaProperties(gongmun: ResolvedGongmun | null): string {
   // 가운데정렬 본문 단락(발신명의 등)
   base.push(paraPr(GONGMUN_CENTER, { align: "CENTER", lineSpacing: ls, keepWord: true }))
   return `<hh:paraProperties itemCnt="${base.length}">\n${base.join("\n")}\n    </hh:paraProperties>`
+}
+
+/**
+ * 개요(OUTLINE) 문단이 참조하는 numbering 정의 — 헤딩 paraPr(1~4)이 사용.
+ * 실제 한컴 파일의 paraHead 속성을 미러하되 번호 서식 텍스트를 비워
+ * 화면에는 번호가 붙지 않는다 (secPr outlineShapeIDRef="1"이 이 정의를 가리킴).
+ */
+function buildNumberings(): string {
+  const heads = Array.from({ length: 7 }, (_, i) =>
+    `        <hh:paraHead start="1" level="${i + 1}" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/>`
+  ).join("\n")
+  return `<hh:numberings itemCnt="1">
+      <hh:numbering id="1" start="0">
+${heads}
+      </hh:numbering>
+    </hh:numberings>`
 }
 
 export function generateHeaderXml(theme: ResolvedTheme, gongmun: ResolvedGongmun | null, ratioVariants: number[] = []): string {
@@ -195,7 +211,7 @@ export function generateHeaderXml(theme: ResolvedTheme, gongmun: ResolvedGongmun
     </hh:borderFills>
     ${charPropsXml}
     <hh:tabProperties itemCnt="0"/>
-    <hh:numberings itemCnt="0"/>
+    ${buildNumberings()}
     <hh:bullets itemCnt="0"/>
     ${paraPropsXml}
     <hh:styles itemCnt="1">

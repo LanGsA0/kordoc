@@ -182,9 +182,9 @@ function bestSimInRange(arr: string[], from: number, to: number, target: string)
 
 // ─── builder.ts 텍스트 변환 재현 (드리프트 시 자기 검증으로 skip) ─────
 
-/** GFM 특수문자 이스케이프 — builder.ts escapeGfm과 동일 */
+/** GFM 특수문자 이스케이프 — builder.ts escapeGfm과 동일 (~ 취소선, * 강조/HR·마스킹 런) */
 export function escapeGfm(text: string): string {
-  return text.replace(/~/g, "\\~")
+  return text.replace(/([~*])/g, "\\$1")
 }
 
 /** builder.ts HWP_SHAPE_ALT_TEXT_RE와 동일 */
@@ -214,7 +214,7 @@ export function normForMatch(text: string): string {
 
 /** 편집된 마크다운 텍스트 → 평문 (escapeGfm 역변환) */
 export function unescapeGfm(text: string): string {
-  return text.replace(/\\~/g, "~")
+  return text.replace(/\\([~*])/g, "$1")
 }
 
 /** 스킵 보고용 내용 요약 (최대 80자) */
@@ -310,7 +310,7 @@ export function parseGfmTable(lines: string[]): string[][] {
 
 /** GFM 셀 텍스트 → 평문 */
 export function unescapeGfmCell(text: string): string {
-  return text.replace(/<br\s*\/?>/gi, "\n").replace(/\\\|/g, "|").replace(/\\~/g, "~")
+  return text.replace(/<br\s*\/?>/gi, "\n").replace(/\\\|/g, "|").replace(/\\([~*])/g, "$1")
 }
 
 // ─── HTML 표 — 좌표 추적 렌더 재현 + 파서 ───────────

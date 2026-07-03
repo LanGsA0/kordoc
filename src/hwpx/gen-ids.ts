@@ -131,16 +131,21 @@ export function charPr(
 
 // ─── paraPr 생성 헬퍼 ───────────────────────────────
 
-export function paraPr(id: number, opts: { align?: string; spaceBefore?: number; spaceAfter?: number; lineSpacing?: number; indent?: number; left?: number; keepWord?: boolean } = {}): string {
-  const { align = "JUSTIFY", spaceBefore = 0, spaceAfter = 0, lineSpacing = 160, indent = 0, left = 0, keepWord = false } = opts
+export function paraPr(id: number, opts: { align?: string; spaceBefore?: number; spaceAfter?: number; lineSpacing?: number; indent?: number; left?: number; keepWord?: boolean; outlineLevel?: number } = {}): string {
+  const { align = "JUSTIFY", spaceBefore = 0, spaceAfter = 0, lineSpacing = 160, indent = 0, left = 0, keepWord = false, outlineLevel } = opts
   // keepWord=true면 한글도 어절(단어) 단위로만 줄바꿈 — 단어 중간에서 끊기지 않음.
   // 단, snapToGrid="1"(글자 격자 강제 정렬)이 켜져 있으면 한컴이 격자에 맞추려고
   // 어절을 깨버린다. 어절 단위 줄나눔에는 반드시 격자를 꺼야 한다(실제 공문서도 0).
   const breakNonLatin = keepWord ? "KEEP_WORD" : "BREAK_WORD"
   const snapGrid = keepWord ? "0" : "1"
+  // outlineLevel(0-based) 지정 시 개요 문단 — 재파싱 헤딩 감지·한컴 문서 찾아가기의
+  // 권위 정보. 번호 서식은 numbering id=1(빈 서식)이라 화면에 번호가 붙지 않는다.
+  const heading = outlineLevel !== undefined
+    ? `<hh:heading type="OUTLINE" idRef="0" level="${outlineLevel}"/>`
+    : `<hh:heading type="NONE" idRef="0" level="0"/>`
   return `      <hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="${snapGrid}" suppressLineNumbers="0" checked="0" textDir="AUTO">
         <hh:align horizontal="${align}" vertical="BASELINE"/>
-        <hh:heading type="NONE" idRef="0" level="0"/>
+        ${heading}
         <hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="${breakNonLatin}" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>
         <hh:autoSpacing eAsianEng="0" eAsianNum="0"/>
         <hh:margin><hc:intent value="${indent}" unit="HWPUNIT"/><hc:left value="${left}" unit="HWPUNIT"/><hc:right value="0" unit="HWPUNIT"/><hc:prev value="${spaceBefore}" unit="HWPUNIT"/><hc:next value="${spaceAfter}" unit="HWPUNIT"/></hh:margin>

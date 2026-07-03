@@ -83,13 +83,15 @@ export function resolveParaHeading(paraEl: Element, ctx: WalkCtx): ResolvedParaH
   for (let l = level + 1; l <= 10; l++) counters[l] = 0
 
   // ^N 치환 — 참조 레벨의 카운터를 그 레벨의 numFormat으로 변환 (예: "^1." → "1.")
-  const fmtText = head?.text?.trim() || `^${level}.`
+  // 서식 텍스트가 명시적으로 빈 paraHead(한컴 "번호 없음" 개요, 생성기 왕복 포함)는
+  // 접두를 발명하지 않는다 — 폴백 "^N."은 해당 레벨 정의 자체가 없을 때만.
+  const fmtText = head ? head.text.trim() : `^${level}.`
   const prefix = fmtText.replace(/\^(10|[1-9])/g, (_, d) => {
     const lv = parseInt(d, 10)
     const refHead = numDef.heads.get(lv)
     const n = counters![lv] || refHead?.start || 1
     return formatHeadNumber(n, refHead?.numFormat || "DIGIT")
   })
-  return { prefix, headingLevel }
+  return { prefix: prefix || undefined, headingLevel }
 }
 
