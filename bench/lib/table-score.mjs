@@ -200,7 +200,49 @@ export function matchTables(refTables, irGrids) {
     usedIr.add(j)
     reordered++
   }
-  return { pairs, merged, usedIr, reordered }
+  // 전체 텍스트 접두 유사도 폴백 (10차): 프로즈 박스를 pdf가 세밀 분할하면
+  // (pair06 결격사유 3x2 → 18x3) 셀 단위 bag 키 교집합이 붕괴해 위 단계가
+  // 전부 무효. 셀 텍스트를 row-major로 이어 붙인 문자열이 접두로 들어맞으면
+  // 같은 박스의 발견으로 인정한다 — 분할 이탈 표는 박스 상단부터 담기므로
+  // 접두 비교가 맞고, 하단 잔여가 1열 표 등으로 모수 밖에 떨어져도 (부분 포착)
+  // 커버 가드 40%로 수용. 셀 좌표 채점(exact/F1/NED)은 그대로 실좌표 대조 —
+  // 매칭 발견만 구제하며 충실도는 정직하게 감점된다.
+  const TEXT_MIN_LEN = 80      // 프로즈 박스 한정 (짧은 표의 우연 접두 배제)
+  const TEXT_MIN_COVER = 0.4   // 짧은 쪽이 긴 쪽의 40% 이상
+  const TEXT_MIN_SIM = 0.85    // 접두 구간 NED 유사도
+  let textMatched = 0
+  const joinKey = g => {
+    let s = ""
+    for (const a of g.anchors ?? g.cells) s += normKey(a.text)
+    return s
+  }
+  const tcand = []
+  let refJoin = null, irJoin = null
+  for (let i = 0; i < n; i++) {
+    if (pairs[i] !== -1 || merged.has(i)) continue
+    refJoin ??= refTables.map(joinKey)
+    if (refJoin[i].length < TEXT_MIN_LEN) continue
+    for (let j = 0; j < m; j++) {
+      if (usedIr.has(j)) continue
+      irJoin ??= irGrids.map(joinKey)
+      const R = refJoin[i], I = irJoin[j]
+      if (I.length < TEXT_MIN_LEN) continue
+      const L = Math.min(R.length, I.length)
+      if (L / Math.max(R.length, I.length) < TEXT_MIN_COVER) continue
+      const maxD = Math.ceil(L * (1 - TEXT_MIN_SIM))
+      const d = levBand(R.slice(0, L), I.slice(0, L), maxD)
+      if (d > maxD) continue
+      tcand.push([1 - d / L, i, j])
+    }
+  }
+  tcand.sort((a, b) => b[0] - a[0])
+  for (const [, i, j] of tcand) {
+    if (pairs[i] !== -1 || usedIr.has(j)) continue
+    pairs[i] = j
+    usedIr.add(j)
+    textMatched++
+  }
+  return { pairs, merged, usedIr, reordered, textMatched }
 }
 
 function mergeGrids(grids) {
@@ -239,7 +281,7 @@ function stripHeadingDecor(refText, irText, headingLines) {
  * 반환: 표 단위 exact, 셀 단위 F1(GriTS-Top 등가), 셀 내용 exact/NED + 상세
  */
 export function scoreTables(refTables, irGrids) {
-  const { pairs, merged, usedIr, reordered } = matchTables(refTables, irGrids)
+  const { pairs, merged, usedIr, reordered, textMatched } = matchTables(refTables, irGrids)
   const details = []
   let exactCount = 0
   const f1s = []
@@ -321,6 +363,7 @@ export function scoreTables(refTables, irGrids) {
     splitTables,
     decorForgiven,
     reordered: reordered ?? 0,
+    textMatched: textMatched ?? 0,
     unmatchedRef: details.filter(d => !d.matched).length,
     unmatchedIr: irGrids.length - usedIr.size,
     details,

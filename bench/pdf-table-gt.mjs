@@ -134,6 +134,7 @@ for (const base of pairs) {
     row.exact = s.exactCount
     row.splitMerged = s.splitTables
     row.reordered = s.reordered
+    row.textMatched = s.textMatched
     row.cellF1 = round(s.cellF1)
     row.cellExactRate = round(s.cellExactRate)
     row.contentNED = round(s.contentNED)
@@ -174,7 +175,7 @@ console.log(`  ref 표 ${summary.refTables} | 매칭 ${round(summary.matchedRate
 console.log(`  cellF1 ${summary.cellF1} | cellExact ${summary.cellExactRate} | contentNED ${summary.contentNED}`)
 for (const r of rows) {
   if (!r.ok) { console.log(`  ❌ ${r.pair}: ${r.error}`); continue }
-  console.log(`  ${r.pair}: ref ${r.refTables} → 매칭 ${r.matched} (분할병합 ${r.splitMerged}·순서구제 ${r.reordered}) exact ${r.exact} | F1 ${r.cellF1} NED ${r.contentNED} | pdf잉여 ${r.unmatchedIr}`)
+  console.log(`  ${r.pair}: ref ${r.refTables} → 매칭 ${r.matched} (분할병합 ${r.splitMerged}·순서구제 ${r.reordered}·텍스트 ${r.textMatched}) exact ${r.exact} | F1 ${r.cellF1} NED ${r.contentNED} | pdf잉여 ${r.unmatchedIr}`)
 }
 
 // 게이트 판정 — 무후퇴 플로어 (2026-07-03 bench:gate 편입)
