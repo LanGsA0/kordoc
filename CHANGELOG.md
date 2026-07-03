@@ -5,7 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.9.0] - 2026-07-03
+## [3.10.0] - 2026-07-03
+
+### Added
+
+- **레이아웃 보존 렌더 (`renderHwpxToSvg` / `kordoc render`)** — 조판 엔진 없이
+  한컴이 HWPX에 저장한 조판 캐시(`linesegarray`·`cellAddr`·`hp:pos`)를 SVG
+  절대배치로 그려 원본 1페이지 레이아웃(결재문서 헤더·표·본문·결재란·사진)을
+  재현. 지원: run별 charPr(크기·굵기·색·밑줄·자간·장평), paraPr 정렬
+  (JUSTIFY/CENTER/RIGHT/배분 — 줄바꿈은 원본 lineseg로 고정), 셀
+  배경색·테두리(borderFill), 셀 수직 정렬, 병합 셀 그리드(스팬 제약 경계 전파
+  솔버), 콘텐츠 초과 행 성장, 인라인(`treatAsChar`) 개체, 이미지 크롭(imgClip),
+  `PAGE`/`PAPER`/`PARA` 개체 앵커(밀어내기 역산). 한컴 저장본 전용 —
+  `markdownToHwpx` 산출물엔 조판 캐시가 없어 명확한 에러를 반환.
+  코퍼스 hwpx 85건 크래시 0 실측
+
+### Fixed
+
+- **uint32 음수 좌표 해석** — `vertOffset="4294967103"`(= −193)처럼 uint32로
+  저장된 음수 오프셋을 부호 있는 값으로 해석 (사진대지 사진 1장이 페이지 밖으로
+  사라지던 원인)
+- **셀 내부 `COLUMN` 기준계** — 셀 안 개체의 `horzRelTo="COLUMN"`을 페이지
+  단이 아닌 현재 셀 영역 기준으로 해석 (우측 셀 사진이 페이지 왼쪽에 겹치던 원인)
 
 ### Added
 
