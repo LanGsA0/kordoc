@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.0] - 2026-07-04
+
+### Added
+
+- **PDF 프로즈 박스 감지** — 상단 라벨탭(제목 칩)이 박스 테두리에 걸쳐 만든 가짜
+  열 위로 본문이 전폭 프로즈로 흐르는 표(검정고시 응시자격 박스 등)를 감지해
+  표를 버리고 아이템을 프로즈 폴백(자연 읽기순)으로 재추출. 판정은 두 신호의
+  교집합 — 기하(내부 수직 구분선 없는 전폭 행이 표 높이의 60%+) × 텍스트(80자+
+  긴 셀 3개+ 이고 채운 셀의 40%+). 기하 단독은 다줄셀 정규표, 텍스트 단독은
+  서술형 2열표와 구분되지 않아 둘 다 충족할 때만 발동. 셀 조인(demote)이 찢긴
+  조각을 스크램블하던 문제 해소 — pdf 코퍼스 7파일 개선/중립, pairs 무변경
+
+### Fixed
+
+- **HML 표 캡션 소실** — hwpml 파서가 `TABLE > SHAPEOBJECT > CAPTION` 텍스트를
+  통째로 버리던 것을 별도 문단으로 보존(`Side=Top/Left`면 표 앞, 그 외는 뒤).
+  `collectCharText`가 SHAPEOBJECT를 스킵해 표 주석("※ …참조" 등 도형 캡션)이
+  소실되던 문제 (bizinfo hmlRecall 0.9727→0.9857)
+
 ## [3.12.0] - 2026-07-03
 
 ### Added
