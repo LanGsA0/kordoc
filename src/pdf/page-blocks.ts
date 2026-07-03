@@ -122,6 +122,73 @@ function wrapStrikethroughRuns(items: NormItem[]): void {
   }
 }
 
+// ─── 프로즈 박스 감지 (라벨탭 위 전폭 프로즈) ──────────
+/** 내부 수직 구분선 없는 전폭 행이 표 높이에서 차지해야 할 최소 비율 (기하 신호) */
+const PROSEBOX_FULLWIDTH_MIN = 0.6
+/** 긴 프로즈 셀 판정 글자수 */
+const PROSEBOX_LONG_CELL_CHARS = 80
+/** 프로즈 박스 판정 최소 긴 셀 수 */
+const PROSEBOX_LONG_CELL_MIN = 3
+/** 긴 셀이 채운 셀에서 차지해야 할 최소 비율 (텍스트 신호) */
+const PROSEBOX_LONG_CELL_RATIO = 0.4
+/** 열 경계 부근 수직선 매칭 tolerance (pt) */
+const PROSEBOX_X_TOL = 8
+
+/** 열 경계 x 부근 수직선들이 [yMin,yMax]를 덮는 union 길이 (프로즈 박스 판정용) */
+function verticalCoverageAt(verticals: LineSegment[], x: number, yMin: number, yMax: number): number {
+  const tol = PROSEBOX_X_TOL
+  const spans: Array<[number, number]> = []
+  for (const v of verticals) {
+    if (Math.abs(v.x1 - x) > tol) continue
+    const lo = Math.max(v.y1, yMin), hi = Math.min(v.y2, yMax)
+    if (hi > lo) spans.push([lo, hi])
+  }
+  if (spans.length === 0) return 0
+  spans.sort((a, b) => a[0] - b[0])
+  let total = 0, s = spans[0][0], e = spans[0][1]
+  for (let i = 1; i < spans.length; i++) {
+    if (spans[i][0] <= e) { if (spans[i][1] > e) e = spans[i][1] }
+    else { total += e - s; s = spans[i][0]; e = spans[i][1] }
+  }
+  return total + (e - s)
+}
+
+/**
+ * 프로즈 박스 판정 — 상단 라벨탭(제목 칩)이 박스 테두리에 걸쳐 만든 가짜 열 위로
+ * 본문이 전폭 프로즈로 흐르는 표(예: 검정고시 응시자격 박스). 셀 텍스트 조인(demote)은
+ * 찢긴 조각을 그대로 이어 스크램블되므로, 이 표는 버리고 아이템을 프로즈 폴백(자연
+ * 읽기순)으로 재추출한다. 판정은 두 신호의 교집합 —
+ *   (a) 기하: 내부 수직 구분선 없는 전폭 행의 높이 합이 표 높이의 60%+
+ *   (b) 텍스트: 80자+ 긴 셀이 3개+ 이고 채운 셀의 40%+
+ * 기하만으론 다줄셀 정규표, 텍스트만으론 서술형 2열표(용어설명·Q&A)와 구분되지 않아
+ * 둘 다 충족할 때만 발동한다.
+ */
+function isProseBoxGrid(grid: TableGrid, verticals: LineSegment[], table: IRTable): boolean {
+  const numCols = grid.colXs.length - 1
+  if (numCols < 2 || grid.rowYs.length < 3) return false
+
+  const gyMax = grid.rowYs[0], gyMin = grid.rowYs[grid.rowYs.length - 1]
+  const span = gyMax - gyMin
+  if (span <= 0) return false
+  const interior = grid.colXs.slice(1, -1)
+  let fullWidthHeight = 0
+  for (let r = 0; r < grid.rowYs.length - 1; r++) {
+    const top = grid.rowYs[r], bot = grid.rowYs[r + 1]
+    const h = top - bot
+    if (h <= 0) continue
+    // 내부 열 경계 어느 하나라도 이 행의 절반 이상을 덮는 수직선이 있으면 구분된 행
+    const hasDivider = interior.some(cx => verticalCoverageAt(verticals, cx, bot, top) >= h * 0.5)
+    if (!hasDivider) fullWidthHeight += h
+  }
+  if (fullWidthHeight < span * PROSEBOX_FULLWIDTH_MIN) return false
+
+  const texts = table.cells.flat().map(c => c.text.trim()).filter(Boolean)
+  const longCells = texts.filter(s => s.length > PROSEBOX_LONG_CELL_CHARS).length
+  if (longCells < PROSEBOX_LONG_CELL_MIN || longCells < texts.length * PROSEBOX_LONG_CELL_RATIO) return false
+
+  return true
+}
+
 /**
  * 선 기반 그리드가 감지된 경우: 테이블 영역의 텍스트는 셀에 매핑,
  * 나머지는 일반 텍스트 블록으로 처리.
@@ -228,6 +295,13 @@ function extractBlocksWithGrids(
     // 빈 테이블(모든 셀이 빈 문자열) 스킵
     const hasContent = finalGrid.some(row => row.some(cell => cell.text.trim() !== ""))
     if (!hasContent) continue
+
+    // 프로즈 박스: 가짜 열 위로 전폭 프로즈가 흐르는 표 → 표를 버리고 아이템을
+    // 프로즈 폴백으로 재추출 (셀 조인 demote는 찢긴 조각을 스크램블하므로 부적합)
+    if (isProseBoxGrid(grid, verticals, irTable)) {
+      for (const it of tableItems) usedItems.delete(it)
+      continue
+    }
 
     const tableBbox: BoundingBox = {
       page: pageNum,
