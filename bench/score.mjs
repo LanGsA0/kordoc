@@ -508,7 +508,8 @@ const MIN_POP = { hwpx: 170, pdf: 25, hwpPairs: 12 }
 const population = {
   value: `hwpx ${hwpxDocs.length}/pdf ${pdfDocs.length}/hwp쌍 ${hwpPairs.length}`,
   threshold: `≥ ${MIN_POP.hwpx}/${MIN_POP.pdf}/${MIN_POP.hwpPairs}`,
-  pass: subPath !== "" ||
+  // 부분 실행(subPath·--doc·--only)은 의도된 축소라 모수 하한 면제 — 단건 재채점 워크플로 복원 (gate-3)
+  pass: subPath !== "" || docFilter != null || only != null ||
     (hwpxDocs.length >= MIN_POP.hwpx && pdfDocs.length >= MIN_POP.pdf && hwpPairs.length >= MIN_POP.hwpPairs),
 }
 const overallPass = (hwpxAgg?.pass ?? true) && (pdfAgg?.pass ?? true) && (hwp5Agg?.pass ?? true) && failures.length === 0 && population.pass

@@ -21,8 +21,8 @@
  */
 
 import JSZip from "jszip"
-import { KordocError } from "../utils.js"
-import { createXmlParser, findChildByLocalName, MAX_DECOMPRESS_SIZE } from "../hwpx/parser-shared.js"
+import { KordocError, precheckZipSize } from "../utils.js"
+import { createXmlParser, findChildByLocalName, MAX_DECOMPRESS_SIZE, MAX_ZIP_ENTRIES } from "../hwpx/parser-shared.js"
 import { toInt32, solveBoundaries, solveRowHeights, type SpanConstraint } from "./layout.js"
 import { measureTextWidth, type WrapMode } from "../hwpx/text-metrics.js"
 import { parseRenderStyles, DEFAULT_CHAR, type RenderStyles, type RenderBorderEdge } from "./head-styles.js"
@@ -753,6 +753,13 @@ function sniffMime(name: string, bytes: Uint8Array): string {
  */
 export async function renderHwpxToSvg(input: ArrayBuffer | Uint8Array, options?: RenderSvgOptions): Promise<RenderSvgResult> {
   const maxImg = options?.maxImageBytes ?? 40 * 1024 * 1024
+  // 압축폭탄 가드 — 파서 진입점과 동일하게 압축해제 전 central directory 선언 크기를 검사한다.
+  // 렌더 이미지 캡은 f.async 로 엔트리를 전량 압축해제한 뒤에야 크기를 보므로, 단일 BinData
+  // 압축폭탄(수 GB 선언)이 캡을 우회해 OOM 을 유발하던 것을 원천 차단한다 (reflow-1).
+  const ab = input instanceof Uint8Array
+    ? input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength) as ArrayBuffer
+    : input
+  precheckZipSize(ab, MAX_DECOMPRESS_SIZE, MAX_ZIP_ENTRIES)
   let zip: JSZip
   try {
     zip = await JSZip.loadAsync(input)

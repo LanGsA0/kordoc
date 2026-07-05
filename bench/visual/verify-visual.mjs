@@ -29,8 +29,11 @@ const GATE = args.includes("--gate")
 const NOISE = args.includes("--noise")
 const CASE = (args.find(a => a.startsWith("--case=")) ?? "").split("=")[1] || null
 
-/** 해밍 거리 임계 (1024비트 중) — 동일 파일 2회 캡처 노이즈 실측 후 여유 2배 박제 */
-const HAMMING_MAX = 48
+/** 해밍 거리 임계 (1024비트 중) — 동일 파일 2회 캡처 노이즈 실측(0~1)에 맞춰 48→16 인하.
+ *  48 은 창 전체 크롭 시절 노이즈 기준의 잔존값이라 소형 개체(도장·수식) 소실을 못 잡았다.
+ *  에러 다이얼로그·백지·대형 개체 소실은 수십~수백 비트라 여전히 검출된다 (gate-2).
+ *  ※ 소형 도장(≤6비트) 확실 검출은 실측 세션에서 seal 케이스 크기 확대 또는 ROI 해시로 보강. */
+const HAMMING_MAX = 16
 
 const APP = "Hancom Office HWP"
 const LOAD_WAIT_MS = 12000
@@ -173,7 +176,13 @@ if (NOISE) {
 }
 
 let fail = 0
-for (const c of CASES.filter(c => !CASE || c.name === CASE)) {
+const targets = CASES.filter(c => !CASE || c.name === CASE)
+if (CASE && targets.length === 0) {
+  // --case= 오타/무매치 — 0건 통과를 '전체 통과'로 오인시키지 않게 명시 실패 (gate-4)
+  console.error(`❌ --case=${CASE} 에 해당하는 케이스가 없습니다 (유효: ${CASES.map(c => c.name).join(", ")})`)
+  process.exit(1)
+}
+for (const c of targets) {
   const hwpx = join(outDir, `${c.name}.hwpx`)
   let buf = await markdownToHwpx(c.md, c.options)
   if (c.post) buf = await c.post(buf)
@@ -183,9 +192,17 @@ for (const c of CASES.filter(c => !CASE || c.name === CASE)) {
   const hash = aHash(png)
   const basePath = join(baseDir, `${c.name}.hash`)
 
-  if (UPDATE || !existsSync(basePath)) {
+  if (UPDATE) {
     writeFileSync(basePath, hash + "\n")
-    console.log(`📌 ${c.name}: baseline ${UPDATE ? "갱신" : "신규 생성"} (out/${c.name}.png 눈으로 확인할 것)`)
+    console.log(`📌 ${c.name}: baseline 갱신 (out/${c.name}.png 눈으로 확인할 것)`)
+    continue
+  }
+  if (!existsSync(basePath)) {
+    // 게이트 모드에서 baseline 부재는 실패 — 깨진 첫 캡처를 truth 로 박제하지 않는다.
+    // 신규 케이스는 --update 로 명시 박제 후 눈으로 확인해야 통과한다 (gate-1).
+    if (GATE) { fail++; console.error(`❌ ${c.name}: baseline 부재 — --update 로 박제 후 눈으로 확인할 것`); continue }
+    writeFileSync(basePath, hash + "\n")
+    console.log(`📌 ${c.name}: baseline 신규 생성 (out/${c.name}.png 눈으로 확인할 것)`)
     continue
   }
   const d = hamming(readFileSync(basePath, "utf8").trim(), hash)
@@ -198,5 +215,5 @@ if (fail) {
   console.error(`\n❌ 시각 게이트: ${fail}건 이탈 — out/*.png를 baseline과 눈으로 대조 후, 의도된 변경이면 --update`)
   if (GATE) process.exit(1)
 } else {
-  console.log(`\n✅ 시각 게이트 통과 (${CASES.length}건)`)
+  console.log(`\n✅ 시각 게이트 통과 (${targets.length}건)`)
 }
