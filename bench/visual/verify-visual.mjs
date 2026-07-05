@@ -76,6 +76,20 @@ const CASES = [
     ])).buffer,
   },
   {
+    // seal-1 colspan — 가로 병합 제목행 아래 데이터행 앵커. 도장이 col2 안에 찍혀야 하고
+    // 병합폭 이중계상으로 표 밖(오른쪽)으로 밀리면 안 된다.
+    name: "seal-colspan",
+    md: `<table><tr><td colspan="2">결재 구분</td><td>비고</td></tr><tr><td>담당자</td><td>과장</td><td>국장 (인)</td></tr></table>`,
+    post: async (buf) => (await placeSealHwpx(buf, [{ anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG) }])).buffer,
+  },
+  {
+    // seal-2 중첩표 — 바깥 넓은 좌측 셀 + 우측 셀 안 중첩표. 도장이 '서명 (인)' 옆(우측 셀)에
+    // 찍혀야 하고, 바깥 셀 오프셋 미가산으로 왼쪽 셀로 밀리면 안 된다.
+    name: "seal-nested",
+    md: `<table><tr><td>왼쪽 바깥 셀 내용을 길게 채워 폭을 넓힌다 상당히</td><td><table><tr><td>서명 (인)</td></tr></table></td></tr></table>`,
+    post: async (buf) => (await placeSealHwpx(buf, [{ anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG) }])).buffer,
+  },
+  {
     // P5 차트 — 막대 2계열. 검증 포인트: 한컴이 차트 개체를 실제로 그려야 한다
     // (chartSpace 파트 오류·미지원 구조면 빈 틀/에러 다이얼로그).
     name: "chart",
