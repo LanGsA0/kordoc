@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.16.2] - 2026-07-05
+
+### Fixed
+- **PDF 표(pline-1)**: `shouldDemoteTable`의 텍스트박스 패턴(`/<[^>]+>/`)이 길이 가드 없이 실행돼 신구조문대비표의 `<신 설>`·`<단서 신설>` 표기를 요약 박스 마커로 오인, 표 전체를 문단으로 강등하던 것 — 텍스트 200자 이하일 때만 텍스트박스로 판정(같은 함수의 "200자 초과=정상 표" 기존 정책과 정합). KAIST 30p 개정안 대비표가 3조각+본문 누출 2건 → 통째 1표로 복원, pdf-table 게이트 지표 동일(회귀 0).
+
+### Changed
+- **bench:visual 오라클 개편(gate-2)**: 도장 유무가 40mm에서도 aHash 0/1024비트로 무감지되던 원인 확정 — 창 crop에 한컴 작업영역 배경(테마 따라 검정/회색)이 37% 포함돼 전역 평균이 254→169로 눌리고, 도장(얇은 붉은 테두리+흰 속)은 32×32 셀 평균이 209~220까지만 희석돼 임계를 못 넘던 것. 순백(≥248) 픽셀 비율로 페이지 경계를 검출해 **페이지만 해시**(신규 `bench/visual/hash-lib.mjs`, 한컴 없이 오프라인 검증 가능)하고, 도장 케이스는 **붉은 픽셀 질량·중심좌표**를 baseline과 대조(소실 50%↓·과다 2배↑·중심 5%p 이동 시 실패). 테마 교차 동일 문서 해밍 26→0(환경 독립), 도장 소실 red 0↔753px 완전 분리, `--seal-sens` 감도 실측 모드 상설화. baseline 2행 포맷 전환·전 케이스 재박제.
+
+### Notes
+- 검증: npm test 799 / bench:gate 56/59(reflow 95%) / bench:visual 재박제 + 신 오라클 게이트(한컴 실렌더).
+- gate-2 감도 실측(재박제 캡처): 도장 15/25/40mm aHash 9/29/53비트 + red-mass 3,228~21,367px — 소형 도장 검출 정본은 red-mass, aHash는 레이아웃 붕괴·백지·대형 소실 담당.
+
 ## [3.16.1] - 2026-07-05
 
 통합 검증 프로덕션 리뷰(v3.15/3.16 발행분 적대 리뷰)의 신규 결함 + 전 클러스터 프레시 스켑틱 재검증에서 발견된 잔여 결함을 수정한다. 대부분 "성공 메시지 + 조용히 틀린 산출물" 계열 — 공문서 자동화에서 무신호 오출력을 차단한다.
