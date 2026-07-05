@@ -17,6 +17,8 @@ export interface RenderCharStyle {
   ratio: number
   /** 자간 % */
   spacing: number
+  /** CSS font-family 스택 — charPr fontRef(hangul)에서 해석. 없으면 root 기본 폴백 */
+  fontFamily?: string
 }
 
 export type ParaAlign = "JUSTIFY" | "LEFT" | "RIGHT" | "CENTER" | "DISTRIBUTE" | "DISTRIBUTE_SPACE"
@@ -69,6 +71,96 @@ export interface RenderStyles {
 }
 
 export const DEFAULT_CHAR: RenderCharStyle = { height: 1000, bold: false, italic: false, underline: false, ratio: 100, spacing: 0 }
+
+// ─── 글꼴 매핑 (HWP fontfaces face → CSS font-family 스택) ──────────────
+//
+// HWPX charPr 는 <hh:fontRef hangul="N">으로 fontfaces 테이블의 실제 글꼴명을 가리킨다.
+// 렌더는 이 글꼴명을 SVG <text font-family>로 내보내 뷰어(WebView2/브라우저)가 원본과
+// 같은 글꼴로 그리게 한다. 미설치 글꼴은 계열(명조=serif / 고딕=sans) 폴백으로 수렴시켜
+// 최소한 획 계열(바탕↔돋움)은 원본과 일치시킨다 — 공문서 제목 고딕이 바탕체로 나오던 회귀 해소.
+
+/** 자주 쓰는 글꼴의 별칭 스택 (한글명↔영문 시스템명 병기 — 뷰어 OS별 등록명 차이 흡수) */
+const FONT_ALIASES: Record<string, string> = {
+  "함초롬바탕": "'HCR Batang','함초롬바탕','한컴바탕'",
+  "한컴바탕": "'HCR Batang','함초롬바탕','한컴바탕'",
+  "함초롬돋움": "'HCR Dotum','함초롬돋움','한컴돋움'",
+  "한컴돋움": "'HCR Dotum','함초롬돋움','한컴돋움'",
+  "맑은 고딕": "'Malgun Gothic','맑은 고딕'",
+  "맑은고딕": "'Malgun Gothic','맑은 고딕'",
+  "굴림": "'Gulim','굴림'",
+  "굴림체": "'GulimChe','굴림체','Gulim'",
+  "돋움": "'Dotum','돋움'",
+  "돋움체": "'DotumChe','돋움체','Dotum'",
+  "바탕": "'Batang','바탕'",
+  "바탕체": "'BatangChe','바탕체','Batang'",
+  "궁서": "'Gungsuh','궁서'",
+  "궁서체": "'GungsuhChe','궁서체','Gungsuh'",
+  "나눔고딕": "'NanumGothic','나눔고딕'",
+  "나눔명조": "'NanumMyeongjo','나눔명조'",
+  "맑은 고딕 Semilight": "'Malgun Gothic Semilight','맑은 고딕'",
+}
+
+/** 명조/바탕 계열(serif) 여부 — 아니면 고딕/돋움(sans)으로 본다 */
+function isSerifFace(face: string): boolean {
+  return /바탕|명조|Batang|Myeong|Mincho|궁서|Gungsuh|Serif|신명|순명|Song|송/i.test(face)
+}
+
+/** CSS font-family 토큰 인용 — 영숫자·하이픈만이면 무인용, 그 외(공백·한글)는 작은따옴표 */
+function cssQuote(name: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(name) ? name : `'${name.replace(/['"\\]/g, "")}'`
+}
+
+/**
+ * HWP 글꼴명 → CSS font-family 스택. 정확한 글꼴 먼저, 이어서 계열 폴백(명조=serif /
+ * 고딕=sans, 각 한국어 렌더 가능 글꼴 포함)을 붙여 미설치 시에도 획 계열을 보존한다.
+ */
+export function hwpFaceToCssStack(face: string | null | undefined): string {
+  const trimmed = (face ?? "").trim()
+  if (!trimmed) return ""
+  const generic = isSerifFace(trimmed)
+    ? "'HCR Batang','Batang','Noto Serif KR',serif"
+    : "'Malgun Gothic','HCR Dotum','Noto Sans KR',sans-serif"
+  const head = FONT_ALIASES[trimmed] ?? cssQuote(trimmed)
+  return `${head},${generic}`
+}
+
+/** fontfaces 테이블에서 HANGUL 그룹의 font id → 글꼴명 맵 (없으면 첫 그룹) */
+function collectHangulFonts(root: Element): Map<string, string> {
+  const map = new Map<string, string>()
+  const findFaces = (el: Element, depth: number): Element | null => {
+    if (depth > 24) return null
+    for (const ch of Array.from(el.childNodes)) {
+      if (ch.nodeType !== 1) continue
+      const e = ch as Element
+      if ((e.tagName || "").replace(/^[^:]+:/, "") === "fontfaces") return e
+      const f = findFaces(e, depth + 1)
+      if (f) return f
+    }
+    return null
+  }
+  const faces = findFaces(root, 0)
+  if (!faces) return map
+  let group: Element | null = null
+  let firstGroup: Element | null = null
+  for (const ch of Array.from(faces.childNodes)) {
+    if (ch.nodeType !== 1) continue
+    const e = ch as Element
+    if ((e.tagName || "").replace(/^[^:]+:/, "") !== "fontface") continue
+    if (!firstGroup) firstGroup = e
+    if ((e.getAttribute("lang") ?? "").toUpperCase() === "HANGUL") { group = e; break }
+  }
+  group = group ?? firstGroup
+  if (!group) return map
+  for (const ch of Array.from(group.childNodes)) {
+    if (ch.nodeType !== 1) continue
+    const e = ch as Element
+    if ((e.tagName || "").replace(/^[^:]+:/, "") !== "font") continue
+    const id = e.getAttribute("id")
+    const face = e.getAttribute("face")
+    if (id != null && face) map.set(id, face)
+  }
+  return map
+}
 
 /** "0.12 mm" / "0.5 mm" → pt */
 function borderWidthPt(v: string | null | undefined): number {
@@ -130,6 +222,9 @@ export function parseRenderStyles(headXml: string): RenderStyles {
   const root = doc.documentElement as unknown as Element | null
   if (!root) return styles
 
+  // fontfaces(HANGUL) 선파싱 — charPr fontRef 해석에 쓴다
+  const hangulFonts = collectHangulFonts(root)
+
   const walk = (el: Element): void => {
     const tag = (el.tagName || "").replace(/^[^:]+:/, "")
     if (tag === "charPr") {
@@ -139,6 +234,9 @@ export function parseRenderStyles(headXml: string): RenderStyles {
         const spacingEl = findChildByLocalName(el, "spacing")
         const underlineEl = findChildByLocalName(el, "underline")
         const textColor = el.getAttribute("textColor")
+        const fontRef = findChildByLocalName(el, "fontRef")
+        const fontId = fontRef?.getAttribute("hangul") ?? fontRef?.getAttribute("latin")
+        const face = fontId != null ? hangulFonts.get(fontId) : undefined
         styles.charPr.set(id, {
           height: Number(el.getAttribute("height")) || 1000,
           bold: findChildByLocalName(el, "bold") != null,
@@ -147,6 +245,7 @@ export function parseRenderStyles(headXml: string): RenderStyles {
           color: textColor && textColor !== "#000000" && textColor.toLowerCase() !== "none" ? textColor : undefined,
           ratio: Number(ratioEl?.getAttribute("hangul")) || 100,
           spacing: Number(spacingEl?.getAttribute("hangul")) || 0,
+          fontFamily: face ? hwpFaceToCssStack(face) : undefined,
         })
       }
     } else if (tag === "paraPr") {

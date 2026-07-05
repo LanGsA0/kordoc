@@ -340,6 +340,7 @@ function drawPara(p: Element, ox: number, oy: number, areaW: number, ctx: Ctx, d
         }
         if (text.trim().length > 0) {
           const attrs: string[] = [`x="${pt(cx)}"`, `y="${pt(y)}"`, `font-size="${pt(st.height)}"`]
+          if (st.fontFamily) attrs.push(`font-family="${st.fontFamily}"`)
           if ([...text].length > 1 && sw > 50) {
             attrs.push(`textLength="${pt(sw)}"`, `lengthAdjust="${plan.scale < 1 ? "spacingAndGlyphs" : "spacing"}"`)
           }
@@ -550,7 +551,7 @@ interface CellModel {
   marginL: number; marginR: number; marginT: number; marginB: number
 }
 
-/** 셀 콘텐츠 세로 범위 — 줄(vp+th)과 PARA 앵커 개체(anchor+h) 최대값 */
+/** 셀 콘텐츠 세로 범위 — 줄(vp+th) + 인라인 개체(중첩표·treatAsChar) + PARA 앵커 개체(anchor+h) 최대값 */
 function cellContentExtent(cell: CellModel): number {
   if (!cell.sub) return 0
   let ext = 0
@@ -560,7 +561,13 @@ function cellContentExtent(cell: CellModel): number {
     for (const s of m.segs) ext = Math.max(ext, s.vertpos + s.textheight)
     const baseV = m.segs[0]?.vertpos ?? 0
     for (const o of m.objs) {
-      if (o.inline) continue
+      if (o.inline) {
+        // 인라인 개체(중첩 표·treatAsChar 이미지)는 줄 위치에서 개체 높이만큼 아래로 뻗는다.
+        // 이를 빼먹으면 중첩 표를 담은 셀 높이가 과소측정돼 표지 중첩표가 겹친다(리뷰: 셀 성장 누락).
+        const h = o.tag === "tbl" ? Math.max(o.height, measureTableHeight(o.el)) : o.height
+        ext = Math.max(ext, baseV + h)
+        continue
+      }
       const pos = findChildByLocalName(o.el, "pos")
       if ((pos?.getAttribute("vertRelTo") ?? "PARA") !== "PARA") continue
       const om = findChildByLocalName(o.el, "outMargin")
@@ -747,91 +754,8 @@ function sniffMime(name: string, bytes: Uint8Array): string {
 
 // ─── 엔트리 ───────────────────────────────────────
 
-/**
- * HWPX(한컴 저장본) → 레이아웃 보존 SVG (1페이지).
- * 조판 캐시(linesegarray)가 없는 파일(예: markdownToHwpx 산출물)은 KordocError.
- */
-export async function renderHwpxToSvg(input: ArrayBuffer | Uint8Array, options?: RenderSvgOptions): Promise<RenderSvgResult> {
-  const maxImg = options?.maxImageBytes ?? 40 * 1024 * 1024
-  // 압축폭탄 가드 — 파서 진입점과 동일하게 압축해제 전 central directory 선언 크기를 검사한다.
-  // 렌더 이미지 캡은 f.async 로 엔트리를 전량 압축해제한 뒤에야 크기를 보므로, 단일 BinData
-  // 압축폭탄(수 GB 선언)이 캡을 우회해 OOM 을 유발하던 것을 원천 차단한다 (reflow-1).
-  const ab = input instanceof Uint8Array
-    ? input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength) as ArrayBuffer
-    : input
-  precheckZipSize(ab, MAX_DECOMPRESS_SIZE, MAX_ZIP_ENTRIES)
-  let zip: JSZip
-  try {
-    zip = await JSZip.loadAsync(input)
-  } catch {
-    throw new KordocError("HWPX(ZIP) 형식이 아닙니다 — 렌더는 HWPX만 지원")
-  }
-  const secFile = zip.file("Contents/section0.xml") ??
-    zip.file(/Contents\/section\d+\.xml$/i).sort((a, b) => a.name.localeCompare(b.name))[0]
-  if (!secFile) throw new KordocError("Contents/section0.xml 없음 — HWPX가 아니거나 손상됨")
-  const secXml = await secFile.async("string")
-  if (secXml.length > MAX_DECOMPRESS_SIZE) throw new KordocError("섹션 XML이 허용 크기를 초과")
-  // 태그 마크업만 매치 — 본문 텍스트에 "linesegarray"가 있어도 캐시로 오판하지 않는다
-  // (본문의 <는 XML에서 &lt;로 이스케이프되므로 리터럴 <…linesegarray는 태그뿐)
-  const hasCache = /<(?:[A-Za-z][\w.-]*:)?linesegarray[\s/>]/.test(secXml)
-  if (!hasCache && !options?.reflow) {
-    throw new KordocError("조판 캐시(linesegarray) 없음 — 한컴에서 저장한 HWPX만 렌더 가능 (reflow 옵션으로 합성 렌더 가능)")
-  }
-
-  const warnings: string[] = []
-  const headFile = zip.file("Contents/header.xml") ?? zip.file("Contents/head.xml")
-  const styles: RenderStyles = headFile
-    ? parseRenderStyles(await headFile.async("string"))
-    : { charPr: new Map(), paraAlign: new Map(), paraGeom: new Map(), borderFill: new Map() }
-  if (!headFile) warnings.push("header.xml 없음 — 기본 스타일로 렌더")
-
-  // BinData 매니페스트 (id → href) — content.hpf 우선, 파일명 휴리스틱 폴백
-  const binmap = new Map<string, string>()
-  const hpf = zip.file(/content\.hpf$/i)[0]
-  if (hpf) {
-    const man = await hpf.async("string")
-    for (const m of man.matchAll(/<[^>]*\bid="([^"]+)"[^>]*\bhref="(BinData\/[^"]+)"[^>]*>/g)) binmap.set(m[1], m[2])
-    for (const m of man.matchAll(/<[^>]*\bhref="(BinData\/[^"]+)"[^>]*\bid="([^"]+)"[^>]*>/g)) binmap.set(m[2], m[1])
-  }
-  // 참조된 이미지만 선로딩 (섹션 문자열 정규식 — DOM 워크 전에 async 구간 종료)
-  // 장당 캡(maxImg) 외에 개수·누적 바이트 캡 — distinct 다수/대형 반복 참조로
-  // 렌더 경로에서만 OOM 가능하던 구멍(파서 경로의 ZIP bomb 가드에 상응)
-  const MAX_IMAGE_REFS = 256
-  const MAX_TOTAL_IMAGE_BYTES = 128 * 1024 * 1024
-  const images = new Map<string, { dataUri: string }>()
-  const refs = new Set<string>()
-  for (const m of secXml.matchAll(/binaryItemIDRef="([^"]+)"/g)) refs.add(m[1])
-  let totalImgBytes = 0
-  for (const ref of refs) {
-    if (images.size >= MAX_IMAGE_REFS) {
-      warnings.push(`이미지 ${refs.size}종 중 ${MAX_IMAGE_REFS}종만 로딩 — 개수 한도 초과분 생략`)
-      break
-    }
-    let href = binmap.get(ref)
-    if (!href) {
-      const cand = zip.file(new RegExp(`BinData/.*${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"))[0]
-      href = cand?.name
-    }
-    if (!href) continue
-    const f = zip.file(href) ?? zip.file("Contents/" + href)
-    if (!f) continue
-    const bytes = await f.async("uint8array")
-    if (bytes.length > maxImg) {
-      warnings.push(`이미지 ${href} ${(bytes.length / 1048576).toFixed(1)}MB — 한도 초과로 생략`)
-      continue
-    }
-    if (totalImgBytes + bytes.length > MAX_TOTAL_IMAGE_BYTES) {
-      warnings.push(`이미지 누적 ${Math.round(MAX_TOTAL_IMAGE_BYTES / 1048576)}MB 한도 초과 — 이후 생략`)
-      break
-    }
-    totalImgBytes += bytes.length
-    images.set(ref, { dataUri: `data:${sniffMime(href, bytes)};base64,${Buffer.from(bytes).toString("base64")}` })
-  }
-
-  const doc = createXmlParser().parseFromString(secXml, "text/xml")
-  const root = doc.documentElement as unknown as Element
-  if (!root) throw new KordocError("섹션 XML 파싱 실패")
-
+/** 구역 하나의 페이지 지오메트리 (HWPUNIT) */
+function readSectionGeom(root: Element): PageGeom {
   const pagePr = findFirst(root, "pagePr")
   const margin = pagePr ? findChildByLocalName(pagePr, "margin") : null
   const PW = num(pagePr, "width", 59528), PH = num(pagePr, "height", 84188)
@@ -839,10 +763,26 @@ export async function renderHwpxToSvg(input: ArrayBuffer | Uint8Array, options?:
   const MT = num(margin, "top", 5668) + num(margin, "header", 0)
   const BODY_H = PH - MT - num(margin, "bottom", 4252) - num(margin, "footer", 0)
   const BODY_W = PW - ML - num(margin, "right", 8504)
+  return { PW, PH, ML, MT, BODY_W, BODY_H }
+}
 
+/** 렌더된 구역 — 페이지 버퍼 + 페이지 크기(구역별 pagePr 상이 가능) */
+interface RenderedSection { pages: string[][]; PW: number; pageH: number; clipId: string }
+
+/**
+ * 구역 하나를 렌더 → 페이지 버퍼. 공유 자원(styles/images/defs/warnings/stats)은 ctx로 넘겨
+ * 이미지 심볼·통계·경고가 전 구역에 누적되게 한다(dataURI 중복·페이지 카운트 정합).
+ */
+function renderSectionToPages(
+  root: Element,
+  geom: PageGeom,
+  ctxBase: Omit<Ctx, "pages" | "page" | "geom">,
+  hasCache: boolean,
+  reflowMode: WrapMode,
+): { pages: string[][]; pageH: number } {
+  const { PW, PH, ML, MT, BODY_W, BODY_H } = geom
   // Tier-2 reflow — 캐시 없는 문단에 linesegarray 합성 주입(한컴본은 이 경로 미진입).
-  // 이후 페이지 프리패스·drawPara가 합성 캐시를 그대로 소비한다.
-  if (!hasCache) reflowSection(root, styles, { BODY_W, BODY_H }, options?.reflowMode ?? "keep")
+  if (!hasCache) reflowSection(root, ctxBase.styles, { BODY_W, BODY_H }, reflowMode)
 
   // 페이지 분할 프리패스 — 최상위 lineseg vertpos는 페이지 로컬(페이지마다 0부터)이라
   // 역행 지점이 곧 페이지 경계다. 다단(colCount>1)은 단 이동도 vertpos가 리셋되지만
@@ -876,12 +816,11 @@ export async function renderHwpxToSvg(input: ArrayBuffer | Uint8Array, options?:
   }
 
   const ctx: Ctx = {
-    pages: Array.from({ length: nPages }, () => []), page: 0,
-    geom: { PW, PH, ML, MT, BODY_W, BODY_H }, styles, images, defs: [],
-    highlights: (options?.highlights ?? []).map(s => s.trim().toLowerCase()).filter(s => s.length > 0),
-    warnings, warned: new Set(), stats: { texts: 0, images: 0, tables: 0 },
+    ...ctxBase,
+    pages: Array.from({ length: nPages }, () => []),
+    page: 0,
+    geom,
   }
-
   for (const p of elements(root)) {
     if (ln(p) !== "p") continue
     drawPara(p, ML, MT, BODY_W, ctx, 0, paraSegPages.get(p))
@@ -890,18 +829,151 @@ export async function renderHwpxToSvg(input: ArrayBuffer | Uint8Array, options?:
   // 리셋이 없는데 본문이 페이지를 넘는 파일(누적 vertpos 기록본) 방어 —
   // 한 페이지로 두되 캔버스만 내용 끝까지 늘려 잘림을 막는다.
   const pageH = nPages === 1 ? Math.max(PH, MT + maxTopV + 2000) : PH
-  const GAP = 2400 // 페이지 사이 시각 간격 (24pt)
-  const totalH = nPages * pageH + (nPages - 1) * GAP
+  return { pages: ctx.pages, pageH }
+}
 
-  const pagesSvg = ctx.pages.map((buf, k) =>
-    `<g data-page="${k + 1}" transform="translate(0 ${pt(k * (pageH + GAP))})">` +
-    `<rect width="${pt(PW)}" height="${pt(pageH)}" fill="white" stroke="#c9c7c4" stroke-width="0.75"/>` +
-    `<g clip-path="url(#pgclip)">\n${buf.join("\n")}\n</g></g>`,
-  ).join("\n")
+/**
+ * HWPX(한컴 저장본) → 레이아웃 보존 SVG. **전 구역(section*)을 세로 스택으로** 렌더한다.
+ * 조판 캐시(linesegarray)가 없는 구역은 reflow 옵션으로 합성 조판(없으면 그 구역 생략);
+ * 렌더 가능한 구역이 하나도 없으면 KordocError.
+ */
+export async function renderHwpxToSvg(input: ArrayBuffer | Uint8Array, options?: RenderSvgOptions): Promise<RenderSvgResult> {
+  const maxImg = options?.maxImageBytes ?? 40 * 1024 * 1024
+  // 압축폭탄 가드 — 파서 진입점과 동일하게 압축해제 전 central directory 선언 크기를 검사한다.
+  // 렌더 이미지 캡은 f.async 로 엔트리를 전량 압축해제한 뒤에야 크기를 보므로, 단일 BinData
+  // 압축폭탄(수 GB 선언)이 캡을 우회해 OOM 을 유발하던 것을 원천 차단한다 (reflow-1).
+  const ab = input instanceof Uint8Array
+    ? input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength) as ArrayBuffer
+    : input
+  precheckZipSize(ab, MAX_DECOMPRESS_SIZE, MAX_ZIP_ENTRIES)
+  let zip: JSZip
+  try {
+    zip = await JSZip.loadAsync(input)
+  } catch {
+    throw new KordocError("HWPX(ZIP) 형식이 아닙니다 — 렌더는 HWPX만 지원")
+  }
+  // 모든 구역 파일 (section0, section1, … — 이름 정렬)
+  const secFiles = zip.file(/Contents\/section\d+\.xml$/i).sort((a, b) => a.name.localeCompare(b.name))
+  if (secFiles.length === 0) throw new KordocError("Contents/section0.xml 없음 — HWPX가 아니거나 손상됨")
+
+  const warnings: string[] = []
+  const headFile = zip.file("Contents/header.xml") ?? zip.file("Contents/head.xml")
+  const styles: RenderStyles = headFile
+    ? parseRenderStyles(await headFile.async("string"))
+    : { charPr: new Map(), paraAlign: new Map(), paraGeom: new Map(), borderFill: new Map() }
+  if (!headFile) warnings.push("header.xml 없음 — 기본 스타일로 렌더")
+
+  // 구역 XML 선로딩 + 크기 가드
+  const secXmls: string[] = []
+  for (const f of secFiles) {
+    const xml = await f.async("string")
+    if (xml.length > MAX_DECOMPRESS_SIZE) throw new KordocError("섹션 XML이 허용 크기를 초과")
+    secXmls.push(xml)
+  }
+
+  // BinData 매니페스트 (id → href) — content.hpf 우선, 파일명 휴리스틱 폴백
+  const binmap = new Map<string, string>()
+  const hpf = zip.file(/content\.hpf$/i)[0]
+  if (hpf) {
+    const man = await hpf.async("string")
+    for (const m of man.matchAll(/<[^>]*\bid="([^"]+)"[^>]*\bhref="(BinData\/[^"]+)"[^>]*>/g)) binmap.set(m[1], m[2])
+    for (const m of man.matchAll(/<[^>]*\bhref="(BinData\/[^"]+)"[^>]*\bid="([^"]+)"[^>]*>/g)) binmap.set(m[2], m[1])
+  }
+  // 참조된 이미지만 선로딩 — 전 구역 ref 합집합 (DOM 워크 전에 async 구간 종료).
+  // 장당 캡(maxImg) 외에 개수·누적 바이트 캡 — distinct 다수/대형 반복 참조로
+  // 렌더 경로에서만 OOM 가능하던 구멍(파서 경로의 ZIP bomb 가드에 상응)
+  const MAX_IMAGE_REFS = 256
+  const MAX_TOTAL_IMAGE_BYTES = 128 * 1024 * 1024
+  const images: Ctx["images"] = new Map()
+  const refs = new Set<string>()
+  for (const xml of secXmls) for (const m of xml.matchAll(/binaryItemIDRef="([^"]+)"/g)) refs.add(m[1])
+  let totalImgBytes = 0
+  for (const ref of refs) {
+    if (images.size >= MAX_IMAGE_REFS) {
+      warnings.push(`이미지 ${refs.size}종 중 ${MAX_IMAGE_REFS}종만 로딩 — 개수 한도 초과분 생략`)
+      break
+    }
+    let href = binmap.get(ref)
+    if (!href) {
+      const cand = zip.file(new RegExp(`BinData/.*${ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"))[0]
+      href = cand?.name
+    }
+    if (!href) continue
+    const f = zip.file(href) ?? zip.file("Contents/" + href)
+    if (!f) continue
+    const bytes = await f.async("uint8array")
+    if (bytes.length > maxImg) {
+      warnings.push(`이미지 ${href} ${(bytes.length / 1048576).toFixed(1)}MB — 한도 초과로 생략`)
+      continue
+    }
+    if (totalImgBytes + bytes.length > MAX_TOTAL_IMAGE_BYTES) {
+      warnings.push(`이미지 누적 ${Math.round(MAX_TOTAL_IMAGE_BYTES / 1048576)}MB 한도 초과 — 이후 생략`)
+      break
+    }
+    totalImgBytes += bytes.length
+    images.set(ref, { dataUri: `data:${sniffMime(href, bytes)};base64,${Buffer.from(bytes).toString("base64")}` })
+  }
+
+  // 전 구역 공유 컨텍스트 자원 (이미지 심볼 defs·통계·경고를 누적)
+  const ctxBase: Omit<Ctx, "pages" | "page" | "geom"> = {
+    styles, images, defs: [],
+    highlights: (options?.highlights ?? []).map(s => s.trim().toLowerCase()).filter(s => s.length > 0),
+    warnings, warned: new Set(), stats: { texts: 0, images: 0, tables: 0 },
+  }
+
+  // 구역별 렌더
+  const rendered: RenderedSection[] = []
+  let noCacheSkipped = false
+  for (let si = 0; si < secXmls.length; si++) {
+    const secXml = secXmls[si]
+    // 태그 마크업만 매치 — 본문 텍스트에 "linesegarray"가 있어도 캐시로 오판하지 않는다
+    // (본문의 <는 XML에서 &lt;로 이스케이프되므로 리터럴 <…linesegarray는 태그뿐)
+    const hasCache = /<(?:[A-Za-z][\w.-]*:)?linesegarray[\s/>]/.test(secXml)
+    if (!hasCache && !options?.reflow) {
+      noCacheSkipped = true
+      warnings.push(`구역 ${si}: 조판 캐시 없음 — reflow 옵션 필요, 생략`)
+      continue
+    }
+    const doc = createXmlParser().parseFromString(secXml, "text/xml")
+    const root = doc.documentElement as unknown as Element
+    if (!root) { warnings.push(`구역 ${si} XML 파싱 실패 — 생략`); continue }
+    const geom = readSectionGeom(root)
+    const { pages, pageH } = renderSectionToPages(root, geom, ctxBase, hasCache, options?.reflowMode ?? "keep")
+    rendered.push({ pages, PW: geom.PW, pageH, clipId: `pgclip${si}` })
+  }
+
+  if (rendered.length === 0) {
+    if (noCacheSkipped) {
+      throw new KordocError("조판 캐시(linesegarray) 없음 — 한컴에서 저장한 HWPX만 렌더 가능 (reflow 옵션으로 합성 렌더 가능)")
+    }
+    throw new KordocError("렌더할 구역이 없습니다 — HWPX가 손상되었을 수 있습니다")
+  }
+
+  // 전 구역 페이지를 세로 스택으로 조립 (구역마다 page 크기 상이 가능 → 구역별 clip)
+  const GAP = 2400 // 페이지 사이 시각 간격 (24pt)
+  const clipDefs: string[] = []
+  const groups: string[] = []
+  let y = 0
+  let maxPW = 0
+  let pageNo = 0
+  for (const rs of rendered) {
+    maxPW = Math.max(maxPW, rs.PW)
+    clipDefs.push(`<clipPath id="${rs.clipId}"><rect x="0" y="0" width="${pt(rs.PW)}" height="${pt(rs.pageH)}"/></clipPath>`)
+    for (const buf of rs.pages) {
+      pageNo++
+      groups.push(
+        `<g data-page="${pageNo}" transform="translate(0 ${pt(y)})">` +
+        `<rect width="${pt(rs.PW)}" height="${pt(rs.pageH)}" fill="white" stroke="#c9c7c4" stroke-width="0.75"/>` +
+        `<g clip-path="url(#${rs.clipId})">\n${buf.join("\n")}\n</g></g>`,
+      )
+      y += rs.pageH + GAP
+    }
+  }
+  const totalH = Math.max(0, y - GAP)
 
   // width/height는 pt 단위 명시 — 단위 없는 px로 두면 A4 실물(96dpi 기준)보다 25% 작게 보인다 (v3.10.1)
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pt(PW)} ${pt(totalH)}" width="${pt(PW)}pt" height="${pt(totalH)}pt" font-family="'HCR Batang','함초롬바탕','Hancom Batang',AppleMyungjo,'Noto Serif CJK KR',serif" xml:space="preserve">\n` +
-    `<defs><clipPath id="pgclip"><rect x="0" y="0" width="${pt(PW)}" height="${pt(pageH)}"/></clipPath>${ctx.defs.join("")}</defs>\n` +
-    `${pagesSvg}\n</svg>`
-  return { svg, width: Math.round(PW) / 100, height: Math.round(totalH) / 100, pageCount: nPages, warnings, stats: ctx.stats }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pt(maxPW)} ${pt(totalH)}" width="${pt(maxPW)}pt" height="${pt(totalH)}pt" font-family="'HCR Batang','함초롬바탕','Hancom Batang',AppleMyungjo,'Noto Serif CJK KR',serif" xml:space="preserve">\n` +
+    `<defs>${clipDefs.join("")}${ctxBase.defs.join("")}</defs>\n` +
+    `${groups.join("\n")}\n</svg>`
+  return { svg, width: Math.round(maxPW) / 100, height: Math.round(totalH) / 100, pageCount: pageNo, warnings, stats: ctxBase.stats }
 }
