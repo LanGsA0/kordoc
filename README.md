@@ -83,6 +83,12 @@ MCP 등록 대신 스킬(SKILL.md) 형태로 쓰려면:
 
 ---
 
+## v3.16.0 변경사항
+
+- **📊 차트 생성**: 마크다운 ```chart 펜스(type/cat/계열 라인)가 한컴 네이티브 차트(OOXML chartSpace)로 생성됩니다 — 막대·선·원·도넛·영역·분산·방사형 등 20종, 계열/조각 색 지정, 잘못된 펜스는 코드블록 폴백.
+- **🔴 도장/서명 자동 날인**: `kordoc seal` — "(인)"·"서명 또는 인" 앵커를 찾아 도장 PNG를 글 앞 부유로 배치. 표/페이지를 키우지 않아 날인 후 서식이 밀리지 않습니다 (MCP `place_seal` 포함).
+- **🔌 Claude Code 플러그인**: `/plugin marketplace add chrisryugj/kordoc` → `.hwp`/`.hwpx`/공문서 요청에 kordoc 스킬 자동 활성화.
+
 ## v3.15.0 변경사항
 
 - **🖋️ reflow 렌더 (캐시 없는 파일도 조판)**: `markdownToHwpx` 산출물·AI 생성본·편집본처럼 조판 캐시(linesegarray)가 없어 렌더가 거부되던 HWPX를 `renderHwpxToSvg(buf, { reflow: true })` / `kordoc render --reflow`로 순수 TS 조판합니다. 검증된 줄나눔 엔진(실측 98% 일치) + 실측 세로 모델로 lineseg를 합성해 기존 렌더 파이프(정렬·표·이미지·형광펜·다페이지)를 재사용합니다. 단문단·표 셀·표 밀어내기·자동 페이지 분할. 한컴 저장본은 캐시 재생 그대로(무회귀).

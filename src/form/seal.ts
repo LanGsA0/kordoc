@@ -199,7 +199,11 @@ function buildFloatPicXml(
     `<hp:imgDim dimwidth="${w}" dimheight="${h}"/>` +
     `<hc:img binaryItemIDRef="${itemId}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:effects/>` +
     `<hp:sz width="${w}" widthRelTo="ABSOLUTE" height="${h}" heightRelTo="ABSOLUTE" protect="0"/>` +
-    `<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="0" allowOverlap="1" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="${posYHu}" horzOffset="${posXHu}"/>` +
+    // horzRelTo=COLUMN: 셀 안에서는 셀 콘텐츠 영역이 원점(한컴 실측 — v3.10 사진대지),
+    // 본문에서는 단 왼쪽이 원점이라 PARA와 동일하게 동작한다. PARA를 쓰면 셀 내부
+    // 개체의 가로 원점을 한컴이 표를 담은 바깥 문단으로 잡아 도장이 옆 셀로 밀린다
+    // (P1 시각검증 실측). 세로는 PARA 유지 — 앵커 줄 기준 배치.
+    `<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="0" allowOverlap="1" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="${posYHu}" horzOffset="${posXHu}"/>` +
     `<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:shapeComment>kordoc seal</hp:shapeComment>` +
     `</hp:pic>`
   )

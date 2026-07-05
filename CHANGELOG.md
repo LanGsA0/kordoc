@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.16.0] - 2026-07-05
+
+### Added
+- **차트 생성 (P5)**: 마크다운 \`\`\`chart 펜스 → 한컴 네이티브 차트. HWPX 차트는 OLE가 아니라 Chart/chartN.xml(OOXML DrawingML chartSpace) 파트 + manifest 등재 + `<hp:chart chartIDRef>` 참조 구조 — claw-hwp(MIT)의 한컴독스 GT 검증 구현을 TS 이식. 막대·선·원·도넛·영역·분산·방사형 + 누적·3D 변형 20종(한국어 별칭 지원), `type:/cat:/size:/colors:` + "이름: 숫자들" 계열 라인 규약, 파싱 실패 시 일반 코드블록 폴백. 차트는 글자처럼 취급(treatAsChar=1)이라 삽입 위치에 고정된다.
+- **도장/서명 배치 (P6)**: `kordoc seal 문서.hwpx --image 도장.png --anchor "(인)"` / `placeSealHwpx()` / MCP `place_seal`(11번째 도구). 앵커 문구("(인)"·"서명 또는 인" 등)를 폰트 메트릭(전각 1em·반각 0.5em)으로 찾아 도장 PNG를 글 앞 부유로 배치 — treatAsChar=0 + flowWithText=0 + allowOverlap=1 (claw-hwp GT 규칙)이라 **표/페이지가 커지지 않는다**. 가운데/오른쪽 정렬 문단의 블록 이동 보정, occurrence 선택, auto/overlap/right 모드, 7~18mm 자동 크기, dx/dy 미세조정.
+- **Claude Code 플러그인 (P7)**: `/plugin marketplace add chrisryugj/kordoc` → kordoc 스킬(SKILL.md — 파싱·생성·채움·패치·날인·검증·렌더 워크플로와 함정 문서화). `.claude-plugin/marketplace.json` + `plugins/kordoc/`, `claude plugin validate` 통과.
+- **bench:visual 케이스 2종 추가**: seal(도장 부유·표 불확장)·chart(차트 실렌더) — 한컴 실렌더 aHash 게이트에 신기능 편입.
+
+### Fixed
+- `patchZipEntries`에 additions 파라미터 — 신규 ZIP 엔트리(BinData 도장 파트)를 기존 로컬 레코드 뒤·CD 앞에 추가 (UTF-8 이름·고정 타임스탬프·기압축 STORE 폴백). 비변경 엔트리 바이트 보존 불변.
+
+### Notes
+- 리뷰 #13(PDF 신구조문 대비표 오강등, PLAUSIBLE)은 실파일 2종(권익위 4p·KAIST 30p)에서 **미재현** — 실존 대비표 PDF는 괘선이 있어 표로 정상 복원(행 대응 유지). 트리거 실파일(무괘선 대비표) 확보 시 재개, 미재현 상태로는 속기록 정발화 회귀 위험 때문에 수정하지 않음.
+
 ## [3.15.0] - 2026-07-05
 
 ### Added

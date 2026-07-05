@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { markdownToHwpx } from "../../dist/index.js"
+import { markdownToHwpx, placeSealHwpx } from "../../dist/index.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const outDir = join(here, "out")
@@ -62,7 +62,29 @@ const CASES = [
     md: "# 추진 계획\n\n- **개요**: 시각 오라클 하네스 검증\n  - 세부 항목 하나\n  - 세부 항목 둘\n- **일정**: 2026년 7월",
     options: { gongmun: { preset: "보고서" } },
   },
+  {
+    // P6 도장 부유 배치 — 본문·표셀 앵커 각 1개. 검증 포인트: 도장이 "(인)" 옆/위에
+    // 붉게 찍히고, 표/페이지가 커지지 않고, 변조 경고가 없어야 한다.
+    name: "seal",
+    md: "# 참가 신청서\n\n신청인: 홍길동 (인)\n\n| 결재 | 담당자 (인) |\n| --- | --- |\n\n표 아래 문단.",
+    post: async (buf) => (await placeSealHwpx(buf, [
+      { anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG) },
+      { anchor: "(인)", occurrence: 1, image: new Uint8Array(SEAL_PNG) },
+    ])).buffer,
+  },
+  {
+    // P5 차트 — 막대 2계열. 검증 포인트: 한컴이 차트 개체를 실제로 그려야 한다
+    // (chartSpace 파트 오류·미지원 구조면 빈 틀/에러 다이얼로그).
+    name: "chart",
+    md: "# 분기별 현황\n\n```chart\ntype: column\ncat: 1분기, 2분기, 3분기\n예산: 100, 120, 110\n집행: 80, 95, 105\n```\n\n차트 아래 문단.",
+  },
 ]
+
+/** P6 도장 픽스처 — 100×100 붉은 '인' PNG (투명 배경, base64 내장) */
+const SEAL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAEK0lEQVR42u2dX4gVVRzHP3daVhBaT/gHVNR9iDZBj/YQjkEp6otE/57aUtQHhQqSrU1ffAnyIZFQX8pSESKinloJIgmJtOAE6uIoKigVtBQUmwNSJirrw52N6+muO3Pv3JlZ+H5gHs65c89czmd/58z5sxwQQogpQy3rF5yxY6q2bIRxVMtdiEQUI6YmEdUSE0hG8dyvXgPJqJaUQDKqJaWr028NqvRsf9y1LAVIRGfENNZroKio1lgkUN9RregJFB3VipJA1VQtJERChIRIiJAQCRESIiGiaLrQtMUD3mj6jiKkPBl9wO3Gyxk7X0KEhKgPydaUdAGPA2uARcAc4EFgFPgTuAicCOPosoR0VsQ84E1gKzAjxf2/APuAw2Ec/aMmKz8RgTN2F/ATMJhGRkIvcAD42Rn7rITkI2MGcBzYDUyb4LY7wPX7FDMHOOaM3eeMrUlI6zKmAceAdd5HY8AQ8DIwH+gO46gH6AYeAV4Bvm9S5ACwV31I63wArPLyhoFNYRxd4P9LoLeAK8n1oTN2LXAUWNBw26Az9lIYR0cUIdmiYyWwxcv+EljZTAbN16hPAI8BkffRu87YhyQkG3u4d19YBPSHcXSTbBsHRoGnk1ficWYBOyUkfXQsAJ70sl9v9dU1jKMR4B0vu19C0vO8lz4TxtHJNsv8CLjR+ErsjF0uIelY3qTvoM09TzeAb73sJRKSjrle+kpO5frlzJOQdMz00nFO5f41yXMkZAJGvfSsDon+Q0LS8VuH2vpHvfTvEpKOc176hRxepXuA1V72WQlJxxfU56vGedgZ+1KbZb5Bfa5rnEtTcb0kKGlb/gjwnZf9XjJgbCU6ljUZmX+igWE2dnhRMhc47oztzShjKfAVML0h+1dgv4Rki5LTwPte9mJg2Bm7zRnbPYmI6c7YQeBHb7wxBmyfqiuIZU+/DwALgWca8kwyDfK2M3YoadpGqC9QmWSVcDXw3ATjjLfCOBoCrYe0EiW3nbEvAoeADU1G2a8lVxpuATvDONoPWjFsaw4qjKONwOY2BnLngSemuoxK7csK4+hj6lt+Xk1WDSf7j+CbwDdJc7cs6ZPQNqB8pfwLHAQOOmNnAk8lkmZT35d1jfq+rMvAD8kML9qXVYyc0WQAibaSCgkREqI+JOVUyGdAX0PW3jCOPpWQ8ujj3jX32WqyhCKkJP4Gvm4y4JSQEtdl1qvJEhIiIUJCJERIiMYh5dPrjF1R8DOvJtP/EkLzjRADBT+zH/hcTZaQEPUhk7Md6Cn5NwxLCP/NL51SkyUkREiIhAgJkRAhIRIiJERChIQICZEQISESIooWojNyKewo70Bn3lKpM3KDTh3ULlqrv1orX1Yk5SfCr8uuTtoWOXXqioDyzlcP1CxV67D7QH1FdWRM2Kmr3yheRGYhEtNZEUKINNwFfT5DTyesQggAAAAASUVORK5CYII=",
+  "base64",
+)
 
 // ─── 한컴 캡처 ────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -153,7 +175,9 @@ if (NOISE) {
 let fail = 0
 for (const c of CASES.filter(c => !CASE || c.name === CASE)) {
   const hwpx = join(outDir, `${c.name}.hwpx`)
-  writeFileSync(hwpx, Buffer.from(await markdownToHwpx(c.md, c.options)))
+  let buf = await markdownToHwpx(c.md, c.options)
+  if (c.post) buf = await c.post(buf)
+  writeFileSync(hwpx, Buffer.from(buf))
   const png = join(outDir, `${c.name}.png`)
   await captureHancom(hwpx, png)
   const hash = aHash(png)

@@ -47,6 +47,8 @@ describe("placeSealHwpx", () => {
     const sec = await zip.file("Contents/section0.xml")!.async("string")
     assert.match(sec, /textWrap="IN_FRONT_OF_TEXT"/)
     assert.match(sec, /treatAsChar="0"[^>]*flowWithText="0"[^>]*allowOverlap="1"/)
+    // 가로 원점 COLUMN — PARA 는 셀 안에서 바깥 문단 기준이 되어 도장이 옆 셀로 밀린다 (P1 실측)
+    assert.match(sec, /horzRelTo="COLUMN"/)
     assert.match(sec, /binaryItemIDRef="image1"/)
 
     // 구조 검증 (manifest 참조·웰폼드 — 한컴독스 거부 요인)
