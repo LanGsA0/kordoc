@@ -536,11 +536,16 @@ function patchParagraph(
 ): number {
   const mapping = ctx.paraMap.get(orig.blockIdx)
   if (!mapping?.para) return skip("문단 소스맵 매핑 실패 (머리말/글상자/캡션 영역이거나 텍스트 불일치)")
-  if (block.text && block.text.includes("\n")) {
-    return skip("문단 내 강제 줄바꿈 포함 — 수정 시 줄바꿈 보존 불가로 미지원 (v1)")
-  }
 
-  let newPlain = textUnitToPlain(edited.raw, block)
+  // <br> 명시 줄바꿈 → \n 복원 (셀 규약과 동일). md의 bare 개행은 soft-wrap이라
+  // textUnitToPlain이 공백으로 접으므로, 본문 문단의 강제 줄바꿈은 <br>로만 표현·수정한다.
+  const restoreBr = (s: string): string => s.replace(/\s*<br\s*\/?\s*>\s*/gi, "\n")
+  let newPlain = restoreBr(textUnitToPlain(edited.raw, block))
+  // 원본이 다중줄인데 새 값에 줄바꿈 표기가 없으면 — soft-wrap 접힘과 줄바꿈 제거 의도를
+  // 구분할 수 없어 줄바꿈 위치 보존 불가 (기존 v1 전면 가드의 정밀화)
+  if (block.text && block.text.includes("\n") && !newPlain.includes("\n")) {
+    return skip("다중줄 문단 수정에 <br> 없음 — 줄바꿈 위치 보존 불가로 미지원 (줄바꿈은 <br>로 표기)")
+  }
 
   // 각주 표기 — 본문이 아닌 각주 컨트롤에 있으므로 분리
   if (block.footnoteText) {
@@ -567,7 +572,7 @@ function patchParagraph(
     }
   }
 
-  const origPlain = textUnitToPlain(orig.raw, block)
+  const origPlain = restoreBr(textUnitToPlain(orig.raw, block))
   if (newPlain === origPlain) return skip("텍스트 외 변경(헤딩 레벨/서식)만 감지 — 스타일 변경은 미지원")
   if (sanitizeText(newPlain) !== newPlain) {
     return skip("공백 정규화 불안정 텍스트 — 패치 시 원문 보존 불가로 미지원")
@@ -937,6 +942,34 @@ function rebuildCharShape(csData: Buffer, coreStartUnit: number): { buf: Buffer;
 }
 
 /**
+ * LINE_SEG(0x45, 36B/세그) 다중줄 합성 — HWP5 binary 구조 실측(kordoc 최초 파싱):
+ * [textpos, vPos, lineH, textH, baseline, lineSpc, hStart, width, tag] 각 int32.
+ * 실파일은 세그먼트마다 vPos만 pitch(=lineH+lineSpc)씩 증가하고 나머지 기하는 전 세그
+ * 동일 → seg0을 통째 복사해 textpos·vPos만 줄마다 바꾼다. 한컴은 LINE_SEG를 재계산하지
+ * 않고 그대로 렌더하므로 1세그면 줄바꿈(0x000a)을 한 줄로 씹는다(실측) — 줄 수만큼
+ * 합성해야 실제로 나뉜다. pitch를 모르는 기하(전부 0 등)면 null — 호출부는 원본 유지.
+ * @param startUnits 코어 시작 WCHAR 위치(선두 control 포함) — 둘째 줄부터의 textpos 기준
+ */
+function synthesizeLineSegs(lineSegData: Buffer, newRaw: string, startUnits: number): { buf: Buffer; count: number } | null {
+  if (lineSegData.length < 36) return null
+  const seg0 = lineSegData.subarray(0, 36)
+  const vPos0 = seg0.readInt32LE(4)
+  const pitch = seg0.readInt32LE(8) + seg0.readInt32LE(20) // lineH + lineSpc
+  if (pitch <= 0) return null
+  const lines = newRaw.split("\n")
+  const segs: Buffer[] = []
+  let pos = startUnits
+  for (let k = 0; k < lines.length; k++) {
+    const s = Buffer.from(seg0)
+    s.writeUInt32LE((k === 0 ? 0 : pos) >>> 0, 0)   // textpos: 첫 줄은 문단 처음(prefix 포함)
+    s.writeInt32LE(vPos0 + k * pitch, 4)            // vPos: 줄마다 한 줄 아래로
+    segs.push(s)
+    pos += lines[k].length + 1                      // 다음 줄 시작 = 이 줄 문자수 + 줄바꿈 1
+  }
+  return { buf: Buffer.concat(segs), count: lines.length }
+}
+
+/**
  * 문단 텍스트 교체를 섹션 repl 맵에 스테이징.
  * PARA_TEXT 치환 + PARA_HEADER nChars + CHAR_SHAPE/LINE_SEG 정합화.
  * 개체 앵커·필드 등 비가시 control이 문단 가장자리에 있어도 그 블록은 보존하고 코어만 교체한다.
@@ -978,6 +1011,15 @@ function stageParaPatch(
     const cs = rebuildCharShape(charShapeRec.data, 0)
     scan.repl.set(para.charShapeIdx, cs.buf)
     newHeader.writeUInt16LE(cs.count, 12)
+    // 다중줄 값이면 LINE_SEG도 줄 수만큼 합성 (1세그면 한컴이 flat 렌더 — 셀 경로와 동일).
+    // 빈 문단 LINE_SEG 기하가 0(pitch 불명)이면 원본 유지 — 값은 들어가고 렌더만 한 줄 폴백.
+    if (newPlain.includes("\n")) {
+      const synth = synthesizeLineSegs(records[para.lineSegIdx].data, newPlain, 0)
+      if (synth) {
+        scan.repl.set(para.lineSegIdx, synth.buf)
+        newHeader.writeUInt16LE(synth.count, 16)      // lineSegCount
+      }
+    }
     scan.repl.set(para.headerIdx, newHeader)
     return 1
   }
@@ -1016,25 +1058,12 @@ function stageParaPatch(
   // LINE_SEG — 강제 줄바꿈(0x000a)이 없으면 원본 유지(한컴은 LINE_SEG를 재계산하지 않고 그대로
   // 렌더하므로 세그먼트 축소는 글자 겹침 유발 → 원본 유지가 안전). 줄바꿈이 있으면 한컴이
   // 1세그먼트를 한 줄로 렌더해 줄바꿈을 씹으므로, 줄 수만큼 세그먼트를 합성해 실제로 나눈다.
-  const lineSegRec = records[para.lineSegIdx]
-  if (newRaw.includes("\n") && lineSegRec.data.length >= 36) {
-    // 실측: 실파일 LINE_SEG는 세그먼트마다 vPos만 pitch(=lineH+lineSpc)씩 증가, 나머지 기하는
-    // 세그먼트 전체 동일 → seg0을 통째 복사하고 textpos·vPos만 줄마다 바꾼다.
-    const seg0 = lineSegRec.data.subarray(0, 36)
-    const vPos0 = seg0.readInt32LE(4)
-    const pitch = seg0.readInt32LE(8) + seg0.readInt32LE(20)  // lineH + lineSpc
-    const lines = newRaw.split("\n")
-    const segs: Buffer[] = []
-    let pos = seg.prefixUnits  // newRaw 시작 WCHAR 위치
-    for (let k = 0; k < lines.length; k++) {
-      const s = Buffer.from(seg0)
-      s.writeUInt32LE((k === 0 ? 0 : pos) >>> 0, 0)   // textpos: 첫 줄은 문단 처음(prefix 포함)
-      s.writeInt32LE(vPos0 + k * pitch, 4)            // vPos: 줄마다 한 줄 아래로
-      segs.push(s)
-      pos += lines[k].length + 1                      // 다음 줄 시작 = 이 줄 문자수 + 줄바꿈 1
+  if (newRaw.includes("\n")) {
+    const synth = synthesizeLineSegs(records[para.lineSegIdx].data, newRaw, seg.prefixUnits)
+    if (synth) {
+      scan.repl.set(para.lineSegIdx, synth.buf)
+      newHeader.writeUInt16LE(synth.count, 16)        // lineSegCount
     }
-    scan.repl.set(para.lineSegIdx, Buffer.concat(segs))
-    newHeader.writeUInt16LE(lines.length, 16)         // lineSegCount
   }
 
   scan.repl.set(para.headerIdx, newHeader)
