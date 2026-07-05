@@ -76,9 +76,11 @@ export function shouldDemoteTable(table: IRTable): boolean {
       }) &&
       table.cells.slice(1).some(row => row.some(c => c.text.trim() !== ""))) return false
 
-  // 텍스트 박스 패턴: 3행 이하 + 3열 이하 + <...> 또는 ㅇ 마커 포함
-  // 공문서 "중점 추진사항" 등 요약 박스
-  if (table.rows <= 3 && table.cols <= 3) {
+  // 텍스트 박스 패턴: 3행 이하 + 3열 이하 + <...> 또는 ㅇ 마커 포함 + 짧은 내용
+  // 공문서 "중점 추진사항" 등 요약 박스. 긴 조문 셀을 가진 신구조문대비표(<신 설>
+  // 표기가 <...> 마커로 오인됨)는 요약 박스가 아니므로 길이 가드로 제외 — 아래 200자
+  // 초과 정상표 정책(allText.length > 200 → return false)과 정합시킨다 (pline-1).
+  if (table.rows <= 3 && table.cols <= 3 && allText.length <= 200) {
     // 빈 셀이 과반 → 텍스트 박스 (테두리 안에 텍스트만 있는 형태)
     const totalCells = table.rows * table.cols
     const emptyCells = totalCells - allCells.length
