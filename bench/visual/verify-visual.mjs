@@ -1,24 +1,29 @@
 /**
- * P1 시각 오라클 하네스 — 로컬 한컴(맥) 실렌더 캡처를 지각해시(aHash)로 게이트.
+ * P1 시각 오라클 하네스 — 로컬 한컴(맥) 실렌더 캡처를 지각해시로 게이트.
  *
  * 원리: markdownToHwpx 산출물을 실제 한컴이 어떻게 그리는지가 유일한 truth다
  * (XML유효·재파싱일치·kordoc렌더 셋 다 통과해도 한컴이 flat/겹침/변조경고로
- * 그린 전례 다수 — 메모리 project-kordoc-v3). 케이스별 한컴 창 캡처를 32×32
- * aHash로 줄여 baseline과 해밍 거리 비교 — 레이아웃 붕괴·백지·경고 다이얼로그는
- * 해시가 크게 벗어나고, 폰트 힌팅·커서 같은 픽셀 노이즈는 흡수된다.
+ * 그린 전례 다수 — 메모리 project-kordoc-v3). 캡처에서 종이(순백) 영역만 찾아
+ * 32×32 aHash로 줄여 baseline과 해밍 비교 — 레이아웃 붕괴·백지·경고 다이얼로그를
+ * 잡고, 작업영역 배경(테마 따라 검정/회색)과 창 위치 변화는 페이지 검출이 흡수한다.
+ * 도장 케이스(red: true)는 붉은 픽셀 질량·중심좌표도 baseline과 대조해 소형 도장
+ * 소실·오배치까지 잡는다 — aHash만으로는 15mm 도장이 9비트라 임계 미달 (gate-2,
+ * 수치 근거는 hash-lib.mjs 헤더).
  *
  * 요구: macOS + Hancom Office HWP.app (GUI 세션). CI 불가 — 발행 전 로컬 실행.
  * 사용:
- *   node bench/visual/verify-visual.mjs            # 관찰 (거리 출력)
- *   node bench/visual/verify-visual.mjs --update   # baseline 해시 갱신
- *   node bench/visual/verify-visual.mjs --gate     # 거리 > 임계 시 exit 1
- *   node bench/visual/verify-visual.mjs --noise    # 같은 케이스 2회 캡처로 노이즈 측정
+ *   node bench/visual/verify-visual.mjs             # 관찰 (거리 출력)
+ *   node bench/visual/verify-visual.mjs --update    # baseline 갱신 (후 눈으로 확인)
+ *   node bench/visual/verify-visual.mjs --gate      # 이탈 시 exit 1
+ *   node bench/visual/verify-visual.mjs --noise     # 같은 케이스 2회 캡처로 노이즈 측정
+ *   node bench/visual/verify-visual.mjs --seal-sens # 도장 감도 실측 (없음/15/25/40mm 4캡처)
  */
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs"
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { markdownToHwpx, placeSealHwpx } from "../../dist/index.js"
+import { analyzePng, hamming, formatBaseline, parseBaseline } from "./hash-lib.mjs"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const outDir = join(here, "out")
@@ -28,12 +33,19 @@ const UPDATE = args.includes("--update")
 const GATE = args.includes("--gate")
 const NOISE = args.includes("--noise")
 const CASE = (args.find(a => a.startsWith("--case=")) ?? "").split("=")[1] || null
+const SEAL_SENS = args.includes("--seal-sens")
 
-/** 해밍 거리 임계 (1024비트 중) — 동일 파일 2회 캡처 노이즈 실측(0~1)에 맞춰 48→16 인하.
- *  48 은 창 전체 크롭 시절 노이즈 기준의 잔존값이라 소형 개체(도장·수식) 소실을 못 잡았다.
- *  에러 다이얼로그·백지·대형 개체 소실은 수십~수백 비트라 여전히 검출된다 (gate-2).
- *  ※ 소형 도장(≤6비트) 확실 검출은 실측 세션에서 seal 케이스 크기 확대 또는 ROI 해시로 보강. */
+/** 해밍 거리 임계 (1024비트 중) — 페이지-crop aHash 노이즈 실측(동일 문서 2캡처 0/1024)
+ *  대비 여유값. 대형 개체 소실·백지·에러 다이얼로그는 수십~수백 비트라 확실히 걸린다.
+ *  소형 도장은 15mm 가 9비트로 임계 미달 — red-mass/중심좌표 게이트(red: true)가 잡는다 (gate-2). */
 const HAMMING_MAX = 16
+
+/** 도장(red) 게이트 — baseline 대비 붉은 픽셀 질량 소실/과다·중심좌표 이동 허용 폭.
+ *  도장 2개 중 1개 소실이면 질량이 절반이라 0.5 하한에 걸리고, 엉뚱한 셀 배치는
+ *  페이지 폭의 수 % 이상 중심이 움직인다 (colspan 오배치 실측 Δ36%). */
+const RED_LOSS = 0.5
+const RED_EXCESS = 2
+const CENTROID_MAX = 0.05
 
 const APP = "Hancom Office HWP"
 const LOAD_WAIT_MS = 12000
@@ -69,6 +81,7 @@ const CASES = [
     // P6 도장 부유 배치 — 본문·표셀 앵커 각 1개. 검증 포인트: 도장이 "(인)" 옆/위에
     // 붉게 찍히고, 표/페이지가 커지지 않고, 변조 경고가 없어야 한다.
     name: "seal",
+    red: true,
     md: "# 참가 신청서\n\n신청인: 홍길동 (인)\n\n| 결재 | 담당자 (인) |\n| --- | --- |\n\n표 아래 문단.",
     post: async (buf) => (await placeSealHwpx(buf, [
       { anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG) },
@@ -79,6 +92,7 @@ const CASES = [
     // seal-1 colspan — 가로 병합 제목행 아래 데이터행 앵커. 도장이 col2 안에 찍혀야 하고
     // 병합폭 이중계상으로 표 밖(오른쪽)으로 밀리면 안 된다.
     name: "seal-colspan",
+    red: true,
     md: `<table><tr><td colspan="2">결재 구분</td><td>비고</td></tr><tr><td>담당자</td><td>과장</td><td>국장 (인)</td></tr></table>`,
     post: async (buf) => (await placeSealHwpx(buf, [{ anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG) }])).buffer,
   },
@@ -86,6 +100,7 @@ const CASES = [
     // seal-2 중첩표 — 바깥 넓은 좌측 셀 + 우측 셀 안 중첩표. 도장이 '서명 (인)' 옆(우측 셀)에
     // 찍혀야 하고, 바깥 셀 오프셋 미가산으로 왼쪽 셀로 밀리면 안 된다.
     name: "seal-nested",
+    red: true,
     md: `<table><tr><td>왼쪽 바깥 셀 내용을 길게 채워 폭을 넓힌다 상당히</td><td><table><tr><td>서명 (인)</td></tr></table></td></tr></table>`,
     post: async (buf) => (await placeSealHwpx(buf, [{ anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG) }])).buffer,
   },
@@ -130,44 +145,14 @@ async function captureHancom(hwpxPath, pngPath) {
   if (front !== APP) throw new Error(`한컴이 front가 아님 (front=${front}) — 다른 창이 캡처를 가림`)
   osa('tell application "System Events" to key code 115 using command down') // Cmd+Home 스크롤 리셋
   await sleep(800)
-  // 문서 페이지 영역만 크롭 — 툴바·찾기필드·상태바 등 UI 크롬은 세션마다 미세하게
-  // 달라 aHash 노이즈가 된다 (실측: 창 전체 38/1024 → 문서 영역만 하면 근접 0)
+  // 툴바·찾기필드·상태바 등 UI 크롬 제거용 대강 크롭 — 종이(순백) 경계는
+  // hash-lib pageRect 가 픽셀에서 다시 찾으므로 여기 비율은 크롬만 잘라내면 된다
   const [wx, wy, ww, wh] = bounds
   const crop = [wx + ww * 0.04, wy + wh * 0.2, ww * 0.92, wh * 0.72].map(Math.round)
   execFileSync("screencapture", ["-x", `-R${crop.join(",")}`, pngPath])
   // quit은 best-effort — 확인 다이얼로그로 -128이 떠도 다음 open이 front 창을 대체한다
   try { osa(`tell application "${APP}" to quit`) } catch { execFileSync("killall", [APP], { stdio: "ignore" }) }
   await sleep(1500)
-}
-
-// ─── aHash (sips 32×32 → BMP 파싱, 외부 의존 없음) ────────────────
-function aHash(pngPath) {
-  const bmpPath = pngPath.replace(/\.png$/, ".bmp")
-  execFileSync("sips", ["-z", "32", "32", "-s", "format", "bmp", pngPath, "--out", bmpPath], { stdio: "pipe" })
-  const b = readFileSync(bmpPath)
-  rmSync(bmpPath)
-  const off = b.readUInt32LE(10)
-  const w = b.readInt32LE(18)
-  const h = Math.abs(b.readInt32LE(22))
-  const bpp = b.readUInt16LE(28) / 8
-  if (w !== 32 || h !== 32 || bpp < 3) throw new Error(`BMP 파싱 실패 w${w} h${h} bpp${bpp * 8}`)
-  const rowSize = Math.ceil((w * bpp) / 4) * 4
-  const gray = []
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const p = off + y * rowSize + x * bpp
-      gray.push((b[p] + b[p + 1] + b[p + 2]) / 3)
-    }
-  }
-  const avg = gray.reduce((s, v) => s + v, 0) / gray.length
-  return gray.map((v) => (v >= avg ? "1" : "0")).join("")
-}
-
-const hamming = (a, b) => {
-  if (a.length !== b.length) return Infinity
-  let d = 0
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++
-  return d
 }
 
 // ─── 메인 ────────────────────────────────────────────
@@ -183,9 +168,31 @@ if (NOISE) {
   for (const k of [1, 2]) {
     const png = join(outDir, `${c.name}.noise${k}.png`)
     await captureHancom(hwpx, png)
-    h.push(aHash(png))
+    h.push(analyzePng(png).bits)
   }
   console.log(`노이즈 해밍 거리 (동일 파일 2회): ${hamming(h[0], h[1])} / 1024`)
+  process.exit(0)
+}
+
+if (SEAL_SENS) {
+  // gate-2 감도 실측 — seal 케이스를 도장 없음/15/25/40mm 로 4회 캡처해 오라클 반응 확인.
+  // 기대: 해밍은 크기에 비례해 증가, red 는 없음 0px ↔ 있음 수천 px 로 완전 분리.
+  const c = CASES.find((x) => x.name === "seal")
+  const base = await markdownToHwpx(c.md, c.options)
+  writeFileSync(join(outDir, "seal-none.hwpx"), Buffer.from(base))
+  await captureHancom(join(outDir, "seal-none.hwpx"), join(outDir, "seal-none.png"))
+  const r0 = analyzePng(join(outDir, "seal-none.png"))
+  console.log(`도장 없음: red ${r0.red}px`)
+  for (const sz of [15, 25, 40]) {
+    const withSeal = (await placeSealHwpx(base, [
+      { anchor: "(인)", occurrence: 0, image: new Uint8Array(SEAL_PNG), sizeMm: sz },
+      { anchor: "(인)", occurrence: 1, image: new Uint8Array(SEAL_PNG), sizeMm: sz },
+    ])).buffer
+    writeFileSync(join(outDir, `seal-${sz}.hwpx`), Buffer.from(withSeal))
+    await captureHancom(join(outDir, `seal-${sz}.hwpx`), join(outDir, `seal-${sz}.png`))
+    const r = analyzePng(join(outDir, `seal-${sz}.png`))
+    console.log(`sizeMm=${sz}: 해밍 ${hamming(r0.bits, r.bits)} / 1024 · red ${r.red}px · 중심 (${(100 * r.cx).toFixed(1)}%, ${(100 * r.cy).toFixed(1)}%)`)
+  }
   process.exit(0)
 }
 
@@ -203,26 +210,44 @@ for (const c of targets) {
   writeFileSync(hwpx, Buffer.from(buf))
   const png = join(outDir, `${c.name}.png`)
   await captureHancom(hwpx, png)
-  const hash = aHash(png)
+  const res = analyzePng(png)
   const basePath = join(baseDir, `${c.name}.hash`)
+  // 도장 케이스인데 붉은 픽셀이 아예 없으면 캡처 자체가 도장 소실 — 박제 전에 알린다
+  const redNote = c.red ? ` · red ${res.red}px${res.red === 0 ? " ⚠️ 도장이 안 보임!" : ""}` : ""
 
   if (UPDATE) {
-    writeFileSync(basePath, hash + "\n")
-    console.log(`📌 ${c.name}: baseline 갱신 (out/${c.name}.png 눈으로 확인할 것)`)
+    writeFileSync(basePath, formatBaseline(res))
+    console.log(`📌 ${c.name}: baseline 갱신${redNote} (out/${c.name}.png 눈으로 확인할 것)`)
     continue
   }
   if (!existsSync(basePath)) {
     // 게이트 모드에서 baseline 부재는 실패 — 깨진 첫 캡처를 truth 로 박제하지 않는다.
     // 신규 케이스는 --update 로 명시 박제 후 눈으로 확인해야 통과한다 (gate-1).
     if (GATE) { fail++; console.error(`❌ ${c.name}: baseline 부재 — --update 로 박제 후 눈으로 확인할 것`); continue }
-    writeFileSync(basePath, hash + "\n")
-    console.log(`📌 ${c.name}: baseline 신규 생성 (out/${c.name}.png 눈으로 확인할 것)`)
+    writeFileSync(basePath, formatBaseline(res))
+    console.log(`📌 ${c.name}: baseline 신규 생성${redNote} (out/${c.name}.png 눈으로 확인할 것)`)
     continue
   }
-  const d = hamming(readFileSync(basePath, "utf8").trim(), hash)
-  const ok = d <= HAMMING_MAX
+  const base = parseBaseline(readFileSync(basePath, "utf8"))
+  if (base.red == null) {
+    // 구 포맷(창 전체 aHash) baseline — 오라클 개편으로 비교 불능. 조용한 통과 금지 (gate-1 정신)
+    fail++
+    console.error(`❌ ${c.name}: 구 포맷 baseline — 페이지-crop 오라클로 개편됨, --update 로 재박제 후 눈으로 확인할 것`)
+    continue
+  }
+  const d = hamming(base.bits, res.bits)
+  const problems = []
+  if (d > HAMMING_MAX) problems.push(`해밍 ${d} > 임계 ${HAMMING_MAX}`)
+  if (c.red) {
+    if (res.red < base.red * RED_LOSS) problems.push(`도장 소실/축소 — red ${res.red}px < 기준 ${base.red}px의 ${RED_LOSS * 100}%`)
+    else if (res.red > base.red * RED_EXCESS) problems.push(`red 과다 — ${res.red}px > 기준 ${base.red}px의 ${RED_EXCESS}배`)
+    else if (base.cx != null && res.cx != null && (Math.abs(res.cx - base.cx) > CENTROID_MAX || Math.abs(res.cy - base.cy) > CENTROID_MAX))
+      problems.push(`도장 위치 이동 — 중심 Δ(${(100 * (res.cx - base.cx)).toFixed(1)}%, ${(100 * (res.cy - base.cy)).toFixed(1)}%)`)
+  }
+  const ok = problems.length === 0
   if (!ok) fail++
-  console.log(`${ok ? "✅" : "❌"} ${c.name}: 해밍 ${d} (임계 ${HAMMING_MAX}) — out/${c.name}.png`)
+  const redInfo = c.red ? ` · red ${res.red}px(기준 ${base.red})` : ""
+  console.log(`${ok ? "✅" : "❌"} ${c.name}: 해밍 ${d}${redInfo}${ok ? "" : " — " + problems.join("; ")} — out/${c.name}.png`)
 }
 
 if (fail) {
