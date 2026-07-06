@@ -13,7 +13,7 @@ import { extractHwp5Images, extractHwp5ImagesLenient } from "./images.js"
 import { decryptViewText } from "./crypto.js"
 import { hwpEquationToLatex } from "./equation.js"
 import { parseLenientCfb, type LenientCfbContainer } from "./cfb-lenient.js"
-import { buildTable, blocksToMarkdown, convertTableToText, flattenLayoutTables, MAX_COLS, MAX_ROWS } from "../table/builder.js"
+import { buildTable, blocksToMarkdown, convertTableToText, flattenLayoutTables, dedupeRunningHeaders, MAX_COLS, MAX_ROWS } from "../table/builder.js"
 import type { CellContext, IRBlock, IRCell, IRTable, DocumentMetadata, InternalParseResult, ParseOptions, ParseWarning, OutlineItem, InlineStyle } from "../types.js"
 import { HEADING_RATIO_H1, HEADING_RATIO_H2, HEADING_RATIO_H3 } from "../types.js"
 import { KordocError, sanitizeHref } from "../utils.js"
@@ -184,7 +184,8 @@ export function parseHwp5Document(buffer: Buffer, options?: ParseOptions): Inter
     : extractHwp5ImagesLenient(lenientCfb!, blocks, warnings)
 
   // 레이아웃 테이블 해체 (heading 감지 전에 수행하여 해체된 텍스트도 heading 감지 대상)
-  const flatBlocks = flattenLayoutTables(blocks)
+  // + 페이지 레이아웃 표에서 페이지마다 반복되던 러닝 헤더 중복 제거
+  const flatBlocks = dedupeRunningHeaders(flattenLayoutTables(blocks))
 
   // 스타일 기반 헤딩 감지
   if (docInfo) {
