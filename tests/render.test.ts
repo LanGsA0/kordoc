@@ -155,6 +155,81 @@ describe("render: reflow 표 밀어내기 (셀 콘텐츠 성장)", () => {
   })
 })
 
+describe("render: reflow 인라인 표 나란히 배치 (결재란 겹침)", () => {
+  it("한 문단의 인라인 표 2개는 가로로 전진 배치 — 같은 x에 겹치지 않는다", async () => {
+    // 공문 결재란 구조 재현: 호스트 문단(실텍스트 0) 안에 treatAsChar 표 2개 연속.
+    // reflow가 합성한 lineseg textpos가 chars.length로 폴백하면 plan.start가 개체
+    // index보다 커져 advanceTo 가로 전진에서 개체가 전부 빠지고 같은 x에 겹친다.
+    const hwpx = await markdownToHwpx(
+      "| 라벨표 |\n| --- |\n| 결재일자 |\n\n| 스탬프표 |\n| --- |\n| 주무관 |",
+    )
+    const zip = await JSZip.loadAsync(hwpx)
+    const secName = Object.keys(zip.files).find(n => /section0\.xml$/.test(n))!
+    let sec = await zip.file(secName)!.async("string")
+    // 두 번째 표를 첫 표의 호스트 문단으로 이동 (연속 인라인 개체)
+    const starts = [...sec.matchAll(/<hp:tbl /g)].map(m => m.index!)
+    assert.equal(starts.length, 2, "재현 전제: 표 2개 생성")
+    const t2End = sec.indexOf("</hp:tbl>", starts[1]) + "</hp:tbl>".length
+    const t2 = sec.slice(starts[1], t2End)
+    const host2Start = sec.lastIndexOf("<hp:p ", starts[1])
+    const host2End = sec.indexOf("</hp:p>", t2End) + "</hp:p>".length
+    sec = sec.slice(0, host2Start) + sec.slice(host2End) // 둘째 호스트 문단 제거
+    const t1End = sec.indexOf("</hp:tbl>") + "</hp:tbl>".length
+    sec = sec.slice(0, t1End) + t2 + sec.slice(t1End) // 첫 표 바로 뒤에 삽입
+    zip.file(secName, sec)
+    const buf = await zip.generateAsync({ type: "nodebuffer" })
+
+    const r = await renderHwpxToSvg(new Uint8Array(buf), { reflow: true })
+    const textX = (t: string): number => {
+      const m = [...r.svg.matchAll(/<text x="([\d.-]+)"[^>]*>([^<]*)<\/text>/g)]
+        .find(mm => mm[2].includes(t))
+      assert.ok(m, `"${t}" 텍스트가 렌더에 없음`)
+      return parseFloat(m![1])
+    }
+    const x1 = textX("결재일자")
+    const x2 = textX("주무관")
+    // 표1 폭만큼 전진해야 한다 (겹침이면 둘 다 문단 원점 부근 — 차이 수 pt 이하)
+    assert.ok(x2 - x1 > 50, `둘째 인라인 표가 전진하지 않고 겹침: x1=${x1}, x2=${x2}`)
+  })
+})
+
+describe("render: 가로(landscape) 문서 페이지 방향", () => {
+  it('landscape="NARROWLY"면 페이지 W/H를 회전 — 무시하면 가로 문서 오른쪽이 잘린다', async () => {
+    const hwpx = await markdownToHwpx("가로 문서 본문입니다.")
+    const zip = await JSZip.loadAsync(hwpx)
+    const secName = Object.keys(zip.files).find(n => /section0\.xml$/.test(n))!
+    let sec = await zip.file(secName)!.async("string")
+    sec = sec.replace(/landscape="WIDELY"/, 'landscape="NARROWLY"')
+    zip.file(secName, sec)
+    const buf = await zip.generateAsync({ type: "nodebuffer" })
+    const r = await renderHwpxToSvg(new Uint8Array(buf), { reflow: true })
+    // A4 세로 595.28×841.88 → 가로 841.88×…
+    assert.equal(r.width, 841.88, `가로 문서 페이지 폭이 회전되지 않음: ${r.width}`)
+  })
+})
+
+describe("render: 페이지 분할 — vertpos 동일(0) 문단 연속", () => {
+  it("페이지 전체가 개체 하나인 문단(v0)이 연속되면 각각 새 페이지다 (의사일정 겹침)", async () => {
+    // 한컴 저장본 패턴 합성: 최상위 문단 3개, 각각 lineseg vertpos=0 (페이지 로컬 리셋).
+    // strict 역행(v < prevV)만 보면 0→0이 안 걸려 뒤 페이지들이 전부 겹친다.
+    const base = await markdownToHwpx("페이지 분할 테스트")
+    const zip = await JSZip.loadAsync(base)
+    const secName = Object.keys(zip.files).find(n => /section0\.xml$/.test(n))!
+    let sec = await zip.file(secName)!.async("string")
+    const seg = `<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000"` +
+      ` textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="42520" flags="393216"/></hp:linesegarray>`
+    const para = (t: string) =>
+      `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>${t}</hp:t></hp:run>${seg}</hp:p>`
+    sec = sec.replace(/<\/hs:sec>|<\/hp:sec>/, m => `${para("첫페이지")}${para("둘째페이지")}${para("셋째페이지")}${m}`)
+    zip.file(secName, sec)
+    const buf = await zip.generateAsync({ type: "nodebuffer" })
+    const r = await renderHwpxToSvg(new Uint8Array(buf)) // 캐시 있음 — Tier-1 경로
+    const pages = [...r.svg.matchAll(/data-page="(\d+)"/g)].map(m => +m[1])
+    const nPages = pages.length ? Math.max(...pages) + 1 : 1
+    assert.ok(nPages >= 3, `v0 연속 문단이 페이지로 갈라지지 않음 (pages=${nPages})`)
+  })
+})
+
 describe("render: 실파일 e2e (corpus 존재 시)", { skip: !existsSync(CORPUS) }, () => {
   const read = (rel: string): Uint8Array => new Uint8Array(readFileSync(join(CORPUS, rel)))
   // base64 데이터 URI엔 "NaN"이 유효 부분열로 우연히 등장한다 — 좌표 검사에서 제외

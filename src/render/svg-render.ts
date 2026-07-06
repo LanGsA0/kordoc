@@ -758,7 +758,13 @@ function sniffMime(name: string, bytes: Uint8Array): string {
 function readSectionGeom(root: Element): PageGeom {
   const pagePr = findFirst(root, "pagePr")
   const margin = pagePr ? findChildByLocalName(pagePr, "margin") : null
-  const PW = num(pagePr, "width", 59528), PH = num(pagePr, "height", 84188)
+  let PW = num(pagePr, "width", 59528), PH = num(pagePr, "height", 84188)
+  // 용지 방향 — width/height는 용지 원방향(세로) 치수로 저장되고 landscape="NARROWLY"가
+  // 가로(90° 회전)를 뜻한다(WIDELY=세로). 무시하면 가로 문서의 오른쪽이 잘린다
+  // (실측: 가로 A4 문서 lineseg 줄폭 78520 = 84188 − 좌우마진, 세로폭 59528 초과).
+  if (pagePr?.getAttribute("landscape") === "NARROWLY" && PW < PH) {
+    const t = PW; PW = PH; PH = t
+  }
   const ML = num(margin, "left", 8504)
   const MT = num(margin, "top", 5668) + num(margin, "header", 0)
   const BODY_H = PH - MT - num(margin, "bottom", 4252) - num(margin, "footer", 0)
@@ -787,6 +793,10 @@ function renderSectionToPages(
   // 페이지 분할 프리패스 — 최상위 lineseg vertpos는 페이지 로컬(페이지마다 0부터)이라
   // 역행 지점이 곧 페이지 경계다. 다단(colCount>1)은 단 이동도 vertpos가 리셋되지만
   // horzpos가 오른쪽으로 점프하므로, horzpos가 왼쪽으로 돌아올 때만 새 페이지로 본다.
+  // vertpos "동일"도 문단 첫 seg + horzpos 비전진이면 경계다 — 페이지 전체가 표 하나인
+  // 문단이 연속되면 vertpos가 매 페이지 0으로 같아서 strict 역행만으론 못 가른다
+  // (의사일정표류: v0 문단 연속 → 뒤 페이지들이 전부 한 페이지에 겹침).
+  // 문단 내부의 vertpos 동일 seg는 개체 좌우로 갈라진 같은 줄(h 우측 점프)이라 제외.
   const colPr = findFirst(root, "colPr")
   const multiCol = num(colPr, "colCount", 1) > 1
   const paraSegPages = new Map<Element, number[]>()
@@ -801,10 +811,15 @@ function renderSectionToPages(
       const lsa = findChildByLocalName(p, "linesegarray")
       const segEls = lsa ? elements(lsa).filter(s => ln(s) === "lineseg") : []
       const pagesOf: number[] = []
+      let paraFirst = true
       for (const s of segEls) {
         const v = num(s, "vertpos")
         const h = num(s, "horzpos")
-        if (v < prevV && (!multiCol || h <= prevH)) cur++
+        const brk = v < prevV
+          ? (!multiCol || h <= prevH)
+          : (paraFirst && v === prevV && h <= prevH)
+        if (brk) cur++
+        paraFirst = false
         pagesOf.push(cur)
         maxTopV = Math.max(maxTopV, v + num(s, "textheight", 1000))
         prevV = v
