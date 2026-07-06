@@ -184,8 +184,16 @@ export function parseHwp5Document(buffer: Buffer, options?: ParseOptions): Inter
     : extractHwp5ImagesLenient(lenientCfb!, blocks, warnings)
 
   // 레이아웃 테이블 해체 (heading 감지 전에 수행하여 해체된 텍스트도 heading 감지 대상)
-  // + 페이지 레이아웃 표에서 페이지마다 반복되던 러닝 헤더 중복 제거
-  const flatBlocks = dedupeRunningHeaders(flattenLayoutTables(blocks))
+  let flatBlocks = flattenLayoutTables(blocks)
+  // 페이지 레이아웃 표의 반복 러닝 헤더 중복 제거 — opt-in (기본 off).
+  // 위치 정보가 없는 HWP5 특성상 정당한 번호매김 반복(붙임별 재번호)까지 오삭제할 수
+  // 있어 옵션이 켜졌을 때만 수행하고, 실제 제거가 있으면 경고로 가시화한다.
+  if (options?.dedupeRunningHeaders) {
+    const deduped = dedupeRunningHeaders(flatBlocks)
+    const removed = flatBlocks.length - deduped.length
+    if (removed > 0) warnings.push({ message: `반복 러닝 헤더 ${removed}개 제거`, code: "HIDDEN_TEXT_FILTERED" })
+    flatBlocks = deduped
+  }
 
   // 스타일 기반 헤딩 감지
   if (docInfo) {
