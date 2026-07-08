@@ -21,8 +21,13 @@ import { buildPrvText, parseMarkdownToBlocks } from "./md-runs.js"
 import { generateContainerXml, generateManifest, generateHeaderXml } from "./gen-header.js"
 import { computeGongmunFitPlan, precomputeGongmunList } from "./gen-gongmun-fit.js"
 import { blocksToSectionXml, type ChartPart } from "./gen-section.js"
+import { buildProfileRemap, profileCharPrBase, type FormatProfile } from "./gen-profile.js"
 
 export { type HwpxTheme } from "./gen-ids.js"
+export {
+  type FormatProfile, type TableProfile, type CellProfile,
+  type BorderFillDef, type BorderDef, type CharPrDef,
+} from "./gen-profile.js"
 
 /** markdownToHwpx 옵션 */
 export interface MarkdownToHwpxOptions {
@@ -33,6 +38,13 @@ export interface MarkdownToHwpxOptions {
    * 미지정 시 기존 범용 마크다운 변환 동작 그대로 유지.
    */
   gongmun?: GongmunOptions
+  /**
+   * 서식 프로필 — 표의 borderFill(테두리·음영)·열 너비·셀 글꼴을 원본 문서 없이
+   * 재현한다(이슈 #41). `hwpxToProfile()`로 추출하거나 직접 작성한 프로필을 넘기면,
+   * 문서 내 표 등장 순서(table_index)로 매칭해 셀 좌표별 서식을 적용한다.
+   * 미지정 시 기존 기본 서식(단일 SOLID 테두리·균등 열폭) 그대로.
+   */
+  profile?: FormatProfile
 }
 
 
@@ -48,14 +60,18 @@ export async function markdownToHwpx(
   const blocks = parseMarkdownToBlocks(markdown)
   const gongmunList = gongmun ? precomputeGongmunList(blocks, gongmun) : null
   const fit = gongmun && gongmunList ? computeGongmunFitPlan(blocks, gongmun, gongmunList) : null
+  // 서식 프로필 — charPr id는 기본(0~10) + 공문서 장평 variant 다음 번호부터 할당
+  const remap = options?.profile
+    ? buildProfileRemap(options.profile, profileCharPrBase(fit?.variants?.length ?? 0))
+    : null
   const chartParts: ChartPart[] = []
-  const sectionXml = blocksToSectionXml(blocks, theme, gongmun, gongmunList, fit, chartParts)
+  const sectionXml = blocksToSectionXml(blocks, theme, gongmun, gongmunList, fit, chartParts, remap)
 
   const zip = new JSZip()
   zip.file("mimetype", "application/hwp+zip", { compression: "STORE" })
   zip.file("META-INF/container.xml", generateContainerXml())
   zip.file("Contents/content.hpf", generateManifest(chartParts))
-  zip.file("Contents/header.xml", generateHeaderXml(theme, gongmun, fit?.variants ?? []))
+  zip.file("Contents/header.xml", generateHeaderXml(theme, gongmun, fit?.variants ?? [], remap))
   zip.file("Contents/section0.xml", sectionXml)
   for (const part of chartParts) zip.file(part.name, part.xml)
   // Preview/ — 한글 프로그램의 일부 버전(특히 macOS)이 존재 여부를 확인함

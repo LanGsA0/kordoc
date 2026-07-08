@@ -14,6 +14,7 @@ import {
 import { type MdBlock, generateParagraph, generateRuns } from "./md-runs.js"
 import { type GongmunFitPlan, variantMapper, precomputeGongmunList } from "./gen-gongmun-fit.js"
 import { generateTable, generateHtmlTableXml } from "./gen-table.js"
+import { type ProfileRemap } from "./gen-profile.js"
 import { generateEquationParagraph } from "./equation-generate.js"
 import { parseChartFence, buildChartSpaceXml, buildChartElementXml } from "./chart-gen.js"
 
@@ -72,9 +73,12 @@ export function blocksToSectionXml(
   gongmunList: Map<number, { marker: string; depth: number }> | null = gongmun ? precomputeGongmunList(blocks, gongmun) : null,
   fit: GongmunFitPlan | null = null,
   chartParts: ChartPart[] | null = null,
+  remap: ProfileRemap | null = null,
 ): string {
   const paraXmls: string[] = []
   let isFirst = true
+  // 문서 내 표 등장 순서 — 실제 방출된 <hp:tbl> 기준(추출기 순서와 정합)
+  let tableSeq = 0
   // 순서 있는 목록 카운터 — indent 레벨별 별도 유지. 다른 블록 만나면 해당 레벨 리셋.
   const orderedCounters: Record<number, number> = {}
   let prevWasOrdered = false
@@ -198,11 +202,12 @@ export function blocksToSectionXml(
             paraXmls.push(`<hp:p paraPrIDRef="0" styleIDRef="0">${secRun}</hp:p>`)
             isFirst = false
           }
-          xml = generateTable(block.rows, theme)
+          xml = generateTable(block.rows, theme, remap?.tables.get(tableSeq) ?? null)
+          tableSeq++
         }
         break
       case "html_table": {
-        const tbl = generateHtmlTableXml(block.text || "", theme)
+        const tbl = generateHtmlTableXml(block.text || "", theme, 44000, remap?.tables.get(tableSeq) ?? null)
         if (tbl) {
           if (isFirst) {
             const secRun = `<hp:run charPrIDRef="0">${generateSecPr(gongmun)}<hp:t></hp:t></hp:run>`
@@ -210,6 +215,7 @@ export function blocksToSectionXml(
             isFirst = false
           }
           xml = `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${tbl}</hp:run></hp:p>`
+          tableSeq++
         } else {
           // 파싱 불가 — 태그 제거한 텍스트 문단 폴백 (원문 HTML을 그대로 싣지 않음)
           const plain = (block.text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()

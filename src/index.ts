@@ -315,6 +315,10 @@ export { placeSealHwpx } from "./form/seal.js"
 export type { SealOp, SealPlacement, PlaceSealResult } from "./form/seal.js"
 export { markdownToHwpx } from "./hwpx/generator.js"
 export type { HwpxTheme, MarkdownToHwpxOptions } from "./hwpx/generator.js"
+export type {
+  FormatProfile, TableProfile, CellProfile, BorderFillDef, BorderDef, CharPrDef,
+} from "./hwpx/generator.js"
+export { hwpxToProfile } from "./hwpx/extract-profile.js"
 export { normalizeGongmunPreset, PRESET_ALIAS } from "./hwpx/gongmun.js"
 export {
   charWidthEm1000, measureTextWidth, simulateWrap, simulateWrapKeepWord, fitRatioForFewerLines,

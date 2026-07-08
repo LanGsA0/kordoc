@@ -6,22 +6,50 @@
 import { parseHtmlTable, htmlCellInnerToLines, extractTopLevelTables, type HtmlRowInfo } from "../roundtrip/markdown-units.js"
 import { CHAR_NORMAL, CHAR_TABLE_HEADER, escapeXml, type ResolvedTheme } from "./gen-ids.js"
 import { generateRuns } from "./md-runs.js"
+import { type TableRemap } from "./gen-profile.js"
 
 // 기본 셀 크기 (HWPUnit) — A4 기준 적당한 기본값
 const TABLE_ID_BASE = 1000
 let tableIdCounter = TABLE_ID_BASE
 function nextTableId(): number { return ++tableIdCounter }
 
-export function generateTable(rows: string[][], theme: ResolvedTheme): string {
+// 프로필 표 불일치 경고 — 표당 1회 (라이브러리 stdout 오염 최소화)
+const warnedTables = new Set<number>()
+function warnProfileMismatch(tblId: number, tp: TableRemap, rowCnt: number, colCnt: number): void {
+  if (warnedTables.has(tblId)) return
+  warnedTables.add(tblId)
+  // eslint-disable-next-line no-console
+  console.warn(`[kordoc] format profile: table ${tp.rows}x${tp.cols} vs document ${rowCnt}x${colCnt} — 프로필 무시`)
+}
+
+/** 표 프로필 유효성 — 행·열 수 일치해야 적용(불일치 시 하위호환 폴백). */
+function usableProfile(tp: TableRemap | null | undefined, tblId: number, rowCnt: number, colCnt: number): TableRemap | null {
+  if (!tp) return null
+  if (tp.rows !== rowCnt || tp.cols !== colCnt) {
+    warnProfileMismatch(tblId, tp, rowCnt, colCnt)
+    return null
+  }
+  return tp
+}
+
+/** 열 폭 배열 — 프로필 col_widths > width/cols > 기본 total/cols. */
+function resolveColWidths(tp: TableRemap | null, colCnt: number, fallbackTotal: number): number[] {
+  if (tp?.colWidths && tp.colWidths.length === colCnt) return tp.colWidths
+  const w = tp?.width ? Math.floor(tp.width / colCnt) : Math.floor(fallbackTotal / colCnt)
+  return Array(colCnt).fill(w)
+}
+
+export function generateTable(rows: string[][], theme: ResolvedTheme, tp: TableRemap | null = null): string {
   const rowCnt = rows.length
   const colCnt = Math.max(...rows.map(r => r.length), 1)
-  // A4 portrait: 폭 약 44000 HWPUnit 사용 가능 → colCnt로 균등 분배
-  const cellW = Math.floor(44000 / colCnt)
   const cellH = 1500  // 기본 행 높이
-  const tblW = cellW * colCnt
-  const tblH = cellH * rowCnt
 
   const tblId = nextTableId()
+  const prof = usableProfile(tp, tblId, rowCnt, colCnt)
+  // A4 portrait: 폭 약 44000 HWPUnit → 프로필 열폭 우선, 없으면 균등 분배
+  const colW = resolveColWidths(prof, colCnt, 44000)
+  const tblW = colW.reduce((a, b) => a + b, 0)
+  const tblH = cellH * rowCnt
 
   // theme.tableHeaderColor 또는 tableHeaderBold가 설정되면 첫 행 셀에 별도 charPr 사용
   const useHeaderStyle =
@@ -33,14 +61,18 @@ export function generateTable(rows: string[][], theme: ResolvedTheme): string {
     const isHeaderRow = rowIdx === 0
     const headerCharPr = isHeaderRow && useHeaderStyle ? CHAR_TABLE_HEADER : CHAR_NORMAL
     const tdElements = cells.map((cell, colIdx) => {
-      const runs = generateRuns(cell, headerCharPr)
+      const k = `${rowIdx},${colIdx}`
+      const bf = prof?.cellBf.get(k) ?? 2
+      const ch = prof?.cellChar.get(k) ?? headerCharPr
+      const h = prof?.cellH.get(k) ?? cellH
+      const runs = generateRuns(cell, ch)
       const p = `<hp:p paraPrIDRef="0" styleIDRef="0">${runs}</hp:p>`
       // <hp:tc> 필수 속성 + subList + cellAddr + cellSpan + cellSz + cellMargin
-      return `<hp:tc name="" header="${isHeaderRow ? 1 : 0}" hasMargin="0" protect="0" editable="1" dirty="0" borderFillIDRef="2">`
+      return `<hp:tc name="" header="${isHeaderRow ? 1 : 0}" hasMargin="0" protect="0" editable="1" dirty="0" borderFillIDRef="${bf}">`
         + `<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">${p}</hp:subList>`
         + `<hp:cellAddr colAddr="${colIdx}" rowAddr="${rowIdx}"/>`
         + `<hp:cellSpan colSpan="1" rowSpan="1"/>`
-        + `<hp:cellSz width="${cellW}" height="${cellH}"/>`
+        + `<hp:cellSz width="${colW[colIdx]}" height="${h}"/>`
         + `<hp:cellMargin left="141" right="141" top="141" bottom="141"/>`
         + `</hp:tc>`
     }).join("")
@@ -113,43 +145,53 @@ function unescapeHtml(s: string): string {
  * subList 안에 재귀 생성한다. 파싱 불가면 null (호출부가 문단 폴백).
  * @param totalWidth 표 전체 폭(HWPUNIT) — 중첩표는 부모 셀폭에 맞춰 축소
  */
-export function generateHtmlTableXml(rawHtml: string, theme: ResolvedTheme, totalWidth: number = 44000): string | null {
+export function generateHtmlTableXml(rawHtml: string, theme: ResolvedTheme, totalWidth: number = 44000, tp: TableRemap | null = null): string | null {
   const rows = parseHtmlTable(rawHtml)
   if (!rows || rows.length === 0) return null
   const { placed, rowCnt, colCnt } = layoutHtmlRows(rows)
   if (rowCnt === 0 || colCnt === 0) return null
 
-  const colW = Math.floor(totalWidth / colCnt)
   const cellH = 1500
-  const tblW = colW * colCnt
   const tblId = nextTableId()
+  const prof = usableProfile(tp, tblId, rowCnt, colCnt)
+  const colW = resolveColWidths(prof, colCnt, totalWidth)
+  const tblW = colW.reduce((a, b) => a + b, 0)
   const useHeaderStyle = theme.tableHeader !== theme.body || theme.tableHeaderBold
+  // 병합셀 폭 = 점유 열들의 폭 합
+  const spanW = (c: number, colSpan: number): number =>
+    colW.slice(c, c + colSpan).reduce((a, b) => a + b, 0)
 
   const tcXmls = placed.map(cell => {
+    const k = `${cell.r},${cell.c}`
+    const bf = prof?.cellBf.get(k) ?? 2
     const headerCharPr = cell.isHeader && useHeaderStyle ? CHAR_TABLE_HEADER : CHAR_NORMAL
+    const ch = prof?.cellChar.get(k) ?? headerCharPr
     const { lines } = htmlCellInnerToLines(cell.inner)
     const paras: string[] = lines.map(line =>
-      `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${headerCharPr}"><hp:t>${escapeXml(unescapeHtml(line))}</hp:t></hp:run></hp:p>`,
+      `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${ch}"><hp:t>${escapeXml(unescapeHtml(line))}</hp:t></hp:run></hp:p>`,
     )
+    const cellW = spanW(cell.c, cell.colSpan)
     // 중첩표 — 셀폭(마진 제외)에 맞춰 재귀 생성. 셀 높이는 중첩표만큼 키움
     // (한컴은 자동 확장하지만 초기 높이가 맞아야 다른 뷰어에서도 안 잘림)
     let nestedH = 0
     for (const nested of extractTopLevelTables(cell.inner)) {
-      const nestedXml = generateHtmlTableXml(nested, theme, Math.max(colW * cell.colSpan - 1020, 4000))
+      const nestedXml = generateHtmlTableXml(nested, theme, Math.max(cellW - 1020, 4000))
       if (nestedXml) {
         paras.push(`<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${nestedXml}</hp:run></hp:p>`)
         nestedH += ((nested.match(/<tr[\s>]/gi) ?? []).length) * cellH + 300
       }
     }
     if (paras.length === 0) {
-      paras.push(`<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${headerCharPr}"><hp:t></hp:t></hp:run></hp:p>`)
+      paras.push(`<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${ch}"><hp:t></hp:t></hp:run></hp:p>`)
     }
-    const cellHeight = Math.max(cellH * cell.rowSpan, Math.max(lines.length, 1) * 800 + nestedH)
-    return `<hp:tc name="" header="${cell.isHeader ? 1 : 0}" hasMargin="0" protect="0" editable="1" dirty="0" borderFillIDRef="2">`
+    // 프로필 실측 높이가 있으면 존중하되, 내용(중첩표 등)이 더 크면 확장
+    const contentH = Math.max(cellH * cell.rowSpan, Math.max(lines.length, 1) * 800 + nestedH)
+    const cellHeight = Math.max(prof?.cellH.get(k) ?? 0, contentH)
+    return `<hp:tc name="" header="${cell.isHeader ? 1 : 0}" hasMargin="0" protect="0" editable="1" dirty="0" borderFillIDRef="${bf}">`
       + `<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">${paras.join("")}</hp:subList>`
       + `<hp:cellAddr colAddr="${cell.c}" rowAddr="${cell.r}"/>`
       + `<hp:cellSpan colSpan="${cell.colSpan}" rowSpan="${cell.rowSpan}"/>`
-      + `<hp:cellSz width="${colW * cell.colSpan}" height="${cellHeight}"/>`
+      + `<hp:cellSz width="${cellW}" height="${cellHeight}"/>`
       + `<hp:cellMargin left="141" right="141" top="141" bottom="141"/>`
       + `</hp:tc>`
   })

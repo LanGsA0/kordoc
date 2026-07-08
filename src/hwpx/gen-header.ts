@@ -10,6 +10,7 @@ import {
   charPr, paraPr,
   type ResolvedTheme,
 } from "./gen-ids.js"
+import { type ProfileRemap } from "./gen-profile.js"
 
 // ─── HWPX 구조 파일 생성 ─────────────────────────────
 
@@ -42,7 +43,7 @@ export function generateManifest(chartParts: Array<{ name: string }> = []): stri
 // ─── charPr 생성 헬퍼 ───────────────────────────────
 
 /** charProperties 블록 생성 — 공문서 모드면 본문/제목 height를 표준값으로 */
-function buildCharProperties(theme: ResolvedTheme, gongmun: ResolvedGongmun | null, ratioVariants: number[] = []): string {
+function buildCharProperties(theme: ResolvedTheme, gongmun: ResolvedGongmun | null, ratioVariants: number[] = [], extraCharPrXmls: string[] = []): string {
   // 비공문서(기존 동작): 본문 10pt
   let body = 1000, code = 900, h1 = 1800, h2 = 1400, h3 = 1200, h4 = 1100
   if (gongmun) {
@@ -77,6 +78,8 @@ function buildCharProperties(theme: ResolvedTheme, gongmun: ResolvedGongmun | nu
       charPr(rows.length + 3, body, true, true, 0, theme.body, r),
     )
   }
+  // 서식 프로필 charPr — variant 다음 id로 이미 부여됨(gen-profile.buildProfileRemap)
+  rows.push(...extraCharPrXmls)
   return `<hh:charProperties itemCnt="${rows.length}">\n${rows.join("\n")}\n    </hh:charProperties>`
 }
 
@@ -136,10 +139,10 @@ ${heads}
     </hh:numberings>`
 }
 
-export function generateHeaderXml(theme: ResolvedTheme, gongmun: ResolvedGongmun | null, ratioVariants: number[] = []): string {
+export function generateHeaderXml(theme: ResolvedTheme, gongmun: ResolvedGongmun | null, ratioVariants: number[] = [], remap: ProfileRemap | null = null): string {
   // 본문 한글 글꼴 (공문서 gothic 프리셋이면 맑은 고딕)
   const bodyFace = gongmun?.bodyFont === "gothic" ? "맑은 고딕" : "함초롬바탕"
-  const charPropsXml = buildCharProperties(theme, gongmun, ratioVariants)
+  const charPropsXml = buildCharProperties(theme, gongmun, ratioVariants, remap?.charPrXmls ?? [])
   const paraPropsXml = buildParaProperties(gongmun)
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <hh:head xmlns:hh="${NS_HEAD}" xmlns:hp="${NS_PARA}" xmlns:hc="${NS_CORE}" version="1.4" secCnt="1">
@@ -194,7 +197,7 @@ export function generateHeaderXml(theme: ResolvedTheme, gongmun: ResolvedGongmun
         </hh:font>
       </hh:fontface>
     </hh:fontfaces>
-    <hh:borderFills itemCnt="2">
+    <hh:borderFills itemCnt="${2 + (remap?.borderFillXmls.length ?? 0)}">
       <hh:borderFill id="1" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">
         <hh:slash type="NONE" Crooked="0" isCounter="0"/>
         <hh:backSlash type="NONE" Crooked="0" isCounter="0"/>
@@ -210,7 +213,7 @@ export function generateHeaderXml(theme: ResolvedTheme, gongmun: ResolvedGongmun
         <hh:rightBorder type="SOLID" width="0.12 mm" color="#000000"/>
         <hh:topBorder type="SOLID" width="0.12 mm" color="#000000"/>
         <hh:bottomBorder type="SOLID" width="0.12 mm" color="#000000"/>
-      </hh:borderFill>
+      </hh:borderFill>${remap && remap.borderFillXmls.length ? "\n" + remap.borderFillXmls.join("\n") : ""}
     </hh:borderFills>
     ${charPropsXml}
     <hh:tabProperties itemCnt="0"/>
