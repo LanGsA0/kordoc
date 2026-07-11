@@ -60,6 +60,7 @@ Beyond plain text extraction, kordoc automates the **entire lifecycle of Korean 
 *   **📊 Faithful table reconstruction**: Borderless PDF tables and heavily merged HWP tables are analyzed structurally and restored as accurate markdown tables. Old-vs-new clause comparison tables in legislative amendment PDFs survive intact (v3.16.2).
 *   **🔍 Automatic redline (diff)**: Compare two documents and see exactly what changed — including cross-format comparison (HWP vs HWPX).
 *   **📝 Markdown back to HWPX**: Turn AI-written content back into report-form `HWPX`. No more copy-paste drudgery.
+*   **🏛️ Government-standard document generation (v4.0)**: An official-document engine built by exhaustively decoding 16 real government templates plus 60 actually-approved drafts. Gaejosik reports (cover, TOC banner, Roman-numeral chapter headers, page numbers, approval box), draft documents (statutory head/foot blocks, automatic "끝."), public-notice and press-release presets, 8-level Korean item numbering, and a 13-rule notation linter (`kordoc lint`) — all verified down to the typeset output via Hancom COM rendering.
 *   **🔄 Lossless format-preserving roundtrip (v3.0)**: Edit the converted markdown and hand it to `patchHwpx` (HWPX) / `patchHwp` (HWP 5.x binary) — only the changed paragraph/cell text is swapped in place, **without touching a single byte of the original formatting**. Row insertion/deletion inherits neighboring-row formatting (v3.7); filling originally-empty HWP 5.x cells works too (v3.8).
 *   **🖼️ Layout-preserving render (v3.10–3.17)**: Reproduce the original layout as SVG from Hancom's saved typesetting cache; files without a cache (AI-generated HWPX, edited output) are typeset directly by a **pure-TS reflow engine**. Multi-page, multi-section, per-run fonts, landscape pages, tables, drawing shapes, search-term highlighting — HWPX previews on a server with no Hancom installed.
 *   **📊 Chart generation (v3.16)**: A markdown ```chart fence (type/cat/series lines) becomes a native Hancom chart (OOXML chartSpace) — 20 types including bar/line/pie/donut/area/scatter/radar, with per-series colors.
@@ -68,6 +69,23 @@ Beyond plain text extraction, kordoc automates the **entire lifecycle of Korean 
 *   **🤖 AI agent integration (MCP)**: Let `Claude`, `Cursor`, and friends call `kordoc` directly to read and produce documents.
 
 ---
+
+## What's New in v4.0.2
+
+- **📏 Benchmarked against real approved documents**: 60 actually-approved government drafts (Seoul open-government archive) plus ministry templates were exhaustively decoded and compared against kordoc's output — 17 gaps catalogued, 9 fixed.
+  - **Typesetting-area root fix**: generated documents lacked a column definition (`colPr`), so Hancom narrowed the text area by 10mm on each side and wide tables spilled into the right margin — now zero overflow across all presets (measured via COM rendering).
+  - **Draft-document head/foot blocks** (`--doc-head`/`--doc-foot`, statutory form), **press-release preset** (`press`), **public-notice head** (`--notice-head`), **report-info line** (`--report-info`).
+  - Column-width allocation rewritten (per-column floor = widest word — short columns no longer shatter vertically), 12pt table cells, draft margins matched to the dominant real-world value (20/15/20/15), level-2 bullet ㅇ/○ split by preset (`--bullet2`).
+- Released after passing an eye-QA gate by a working civil servant.
+
+## What's New in v4.0.1
+
+- **✍️ Practitioner QA fixes**: bold text no longer swaps fonts to HY견고딕/Arial Black ("mystery font" bug), h2 section markers via `--h2-marker` (box □ / number / none), and the third-level dash ― corrected to the real-world hyphen `-`.
+- **📝 13-rule official-notation linter**: `kordoc lint <file>` checks dates, times, amounts, attachment notation, etc.; generation also emits warnings inline.
+
+## What's New in v4.0.0
+
+- **🏛️ Government-standard gaejosik report, complete**: built from an exhaustive decode of 16 real government documents — cover page (gradient title box, accent bars), TOC banner, Roman-numeral chapter headers, page numbers ("- 1 -", cover/TOC excluded), approval box, automatic "끝." end mark, body title box. Tables get the measured government grammar automatically (shaded bold header with double rule, 0.4mm outer border hierarchy, content-proportional column widths, right-aligned placement). `--preset 개조식`.
 
 ## What's New in v3.18.0
 
@@ -197,7 +215,7 @@ const withEquation = await markdownToHwpx("Pythagoras\n\n$$a^2 + b^2 = c^2$$")
 // Official-document mode — 8-level Korean item numbering + hanging indent
 // + official margins/serif defaults
 const gongmun = await markdownToHwpx("1. 추진배경\n  - 세부 항목\n2. 추진계획", {
-  gongmun: { preset: "보고서" },  // official | report | plan | notice | minutes
+  gongmun: { preset: "보고서" },  // official | report | plan | notice | minutes | gaejosik | press
 })
 ```
 
@@ -266,6 +284,7 @@ npx kordoc fill form.hwpx -f '성명=홍길동,주소=서울' -o filled.hwpx   #
 npx kordoc fill form.hwpx -j values.json -o filled.hwpx              # fill from JSON
 npx kordoc fill form.hwpx --dry-run                                  # list fields only
 npx kordoc generate report.md -o report.hwpx --preset 보고서          # markdown → official HWPX
+npx kordoc lint report.hwpx                                          # 13-rule official-notation linter (v4.0.1)
 npx kordoc patch original.hwpx edited.md -o patched.hwpx  # format-preserving roundtrip patch (.hwp auto-detected)
 npx kordoc seal form.hwpx --image stamp.png --anchor "(인)" -o sealed.hwpx  # place a stamp/signature
 npx kordoc validate output.hwpx                     # HWPX structure validation (ZIP, required parts, XML)

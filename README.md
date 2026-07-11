@@ -27,7 +27,7 @@ npx -y kordoc setup
 1. 사용 중인 AI 클라이언트 번호 선택 (Claude Desktop / Cursor / Claude Code / Windsurf / VS Code / Gemini CLI / Zed / Antigravity — 설치된 건 `[감지됨]` 표시)
 2. 설정 파일 자동 패치 → 클라이언트 재시작
 
-Windows 도 자동으로 `cmd /c npx` 래핑. 수동 JSON 편집 불필요. 재시작하면 10개 문서 도구 (`parse_document`, `parse_table`, `fill_form`, `patch_document`, `generate_document` 등) 활성화.
+Windows 도 자동으로 `cmd /c npx` 래핑. 수동 JSON 편집 불필요. 재시작하면 11개 문서 도구 (`parse_document`, `parse_table`, `fill_form`, `patch_document`, `generate_document` 등) 활성화.
 
 > **CLI 로만 쓸 거면** 설치 없이 `npx kordoc <파일>` 바로 사용. 아래 [CLI](#cli) 섹션 참고.
 
@@ -74,6 +74,7 @@ MCP 등록 대신 스킬(SKILL.md) 형태로 쓰려면:
 *   **📊 복잡한 표(Table) 완벽 재현**: 선이 없는 PDF나 복잡하게 병합된 HWP 표도 구조를 분석하여 정확한 마크다운 테이블로 복원합니다. 법령 개정안 PDF의 신구조문대비표도 통째로 살립니다 (v3.16.2).
 *   **🔍 신구대조표 자동 생성**: 두 문서의 차이점을 분석하여 무엇이 바뀌었는지 한눈에 보여줍니다. (HWP와 HWPX 간의 비교도 가능!)
 *   **📝 마크다운을 다시 HWPX로**: AI가 작성한 내용을 다시 보고서 양식(`HWPX`)으로 되돌려줍니다. 이제 복사-붙여넣기 노가다에서 해방되세요.
+*   **🏛️ 정부 표준 공문서 생성 (v4.0)**: 실제 정부 양식 16종 + 실결재 기안문 60건을 전수 디코드·대조해 만든 공문서 엔진. 개조식 보고서(표지·목차 배너·로마숫자 장헤더·쪽번호·결재란), 기안문(별지 제1호서식 두문·결문, "끝." 자동), 공고문·보도자료 프리셋, 항목부호 8단계(1. 가. 1) 가)…) 자동, 공문서 표기법 검수 13룰(`kordoc lint`)까지 — 한글 COM 실렌더로 조판까지 실측 검증했습니다.
 *   **🔄 서식 보존 무손실 라운드트립 (v3.0)**: 변환된 마크다운을 편집해서 `patchHwpx`(HWPX) / `patchHwp`(HWP 5.x 바이너리)에 넘기면, **원본 서식을 1바이트도 건드리지 않고** 바뀐 문단/표 셀의 텍스트만 원본 안에서 교체합니다. v3.7부터는 **표에 행을 추가/삭제하는 편집**도 원본 서식을 승계하며 반영되고, v3.8부터는 HWP 5.x의 **빈 셀에 값 넣기**도 지원합니다.
 *   **🖼️ 레이아웃 보존 렌더 (v3.10~3.15)**: 한컴이 저장한 조판 캐시 좌표로 원본 레이아웃을 SVG로 재현하고, 캐시가 없는 파일(AI가 만든 HWPX·편집본)은 **순수 TS reflow 엔진**이 직접 조판합니다. 다페이지·표·그리기 도형·검색어 형광펜까지. 서버에 한컴 없이 HWPX 미리보기를 만들 수 있습니다.
 *   **📊 차트 생성 (v3.16)**: 마크다운의 ```chart 펜스(type/cat/계열 라인)가 한컴 네이티브 차트(OOXML chartSpace)로 생성됩니다 — 막대·선·원·도넛·영역·분산·방사형 등 20종, 계열/조각 색 지정 가능.
@@ -82,6 +83,23 @@ MCP 등록 대신 스킬(SKILL.md) 형태로 쓰려면:
 *   **🤖 AI 에이전트 연동 (MCP)**: `Claude`, `Cursor`와 같은 도구에서 직접 `kordoc`을 호출해 문서를 읽고 코딩할 수 있습니다.
 
 ---
+
+## v4.0.2 변경사항
+
+- **📏 실측 벤치마킹**: 서울 정보소통광장 **실결재 기안문 60건** + 부처별 양식을 전수 디코드해 생성 결과와의 괴리 17건을 목록화, 9건 반영.
+  - **조판영역 근본수정**: 단 컬럼 정의(`colPr`) 미방출로 본문이 좌우 10mm씩 좁게 잡히고 표가 우측 여백을 침범하던 결함 해소 — 전 프리셋 실렌더 조판영역 초과 0건.
+  - **기안문 두문·결문** (`--doc-head`/`--doc-foot`, 별지 제1호서식) · **보도자료 프리셋 `press`** (머리박스·담당 표) · **공고문 두문** (`--notice-head`) · **보고정보 행** (`--report-info`).
+  - 표 열폭 배분 재작성(열 하한 = 최장 어절 폭 — 짧은 열이 글자 단위로 세로 쪼개지지 않음), 표 셀 12pt, 기안문 여백 실결재 지배값 20/15/20/15, 2단계 부호 ㅇ/○ 프리셋 분화(`--bullet2`).
+- 실무자(현직 공무원) 눈 QA 게이트 통과 후 릴리스.
+
+## v4.0.1 변경사항
+
+- **✍️ 실무자 QA 3건 수정**: bold 시 폰트가 HY견고딕/Arial Black으로 바뀌던 "정체모를 폰트" 제거, h2 섹션 제목 말머리 `--h2-marker`(box □ / number / none), 개조식 소분류 부호 ― → 실무 관행 하이픈 `-`.
+- **📝 공문서 표기법 검수 13룰**: 날짜·시간·금액·붙임 표기 등을 검수하는 `kordoc lint <file>` + 공문서 생성 시 경고 병기.
+
+## v4.0.0 변경사항
+
+- **🏛️ 정부 표준 개조식 보고서 완성**: 실제 정부 공문서 16종 전수 디코드·대조 기반 — 표지(gradient 제목박스·장식 바)·목차 배너·로마숫자 장헤더·쪽번호("- 1 -", 표지·목차 제외)·결재란·"끝." 자동·본문 제목박스. 표는 실측 문법(헤더 음영+이중선, 외곽 0.4mm 위계, 내용 비례 열폭, 우측 배치) 자동 적용. `--preset 개조식`.
 
 ## v3.18.0 변경사항
 
@@ -524,7 +542,7 @@ const withEquation = await markdownToHwpx("피타고라스\n\n$$a^2 + b^2 = c^2$
 
 // 공문서 모드 — 항목부호 8단계 + 내어쓰기 + 공식 여백/명조 자동
 const gongmun = await markdownToHwpx("1. 추진배경\n  - 세부 항목\n2. 추진계획", {
-  gongmun: { preset: "보고서" },  // official | report | plan | notice | minutes | gaejosik
+  gongmun: { preset: "보고서" },  // official | report | plan | notice | minutes | gaejosik | press
 })
 
 // 정부 표준 개조식 보고서 (v4.0) — 표지·목차(장식 배너)·로마숫자 장헤더·
@@ -618,6 +636,7 @@ npx kordoc generate 보고서.md -o 보고서.hwpx --preset 보고서         # 
 npx kordoc patch 원본.hwpx 편집.md -o 반영.hwpx      # 서식 보존 라운드트립 패치 (.hwp도 자동 분기)
 npx kordoc seal 신청서.hwpx --image 도장.png --anchor "(인)" -o 날인.hwpx  # 도장/서명 날인
 npx kordoc validate 산출물.hwpx                      # HWPX 구조 검증 (ZIP·필수 파트·XML)
+npx kordoc lint 보고서.hwpx                          # 공문서 표기법 검수 13룰 (v4.0.1)
 npx kordoc render 결재문서.hwpx -o 미리보기.svg      # 레이아웃 보존 SVG 렌더 (--reflow 지원)
 npx kordoc watch ./수신함 -d ./변환결과              # 폴더 감시 모드
 npx kordoc watch ./문서 --webhook https://api/hook  # 웹훅 알림
