@@ -187,10 +187,13 @@ function walkSection(
             if (footnote) text += ` (주: ${footnote})`
             cell.text += (cell.text ? "\n" : "") + text
             const cellBlock: IRBlock = { type: "paragraph", text, pageNumber: ctx.sectionNum }
-            // 왕복 채널 — 셀 문단도 인라인 강조 span 복원 (v4.0.4: 최상위 한정 확장).
-            // GFM 셀 방출이 마커를 재방출하고 generateRuns가 되읽는다
-            if (ctx.shared.kordocLayout === "default" && !ph?.prefix) {
-              const spans = extractRunSpans(el, ctx)
+            // 왕복 채널 — 셀 문단도 인라인 강조 span 복원 (v4.0.4: 최상위 한정 확장,
+            // v4.0.5: gongmun·외래 확장). GFM 셀 방출이 마커를 재방출하고 generateRuns가
+            // 되읽는다. 자사 default 외에는 혼합 가드 — 전체 볼드 셀은 헤더행·라벨열의
+            // 구조 서식이 지배적이라 마커를 억제한다
+            const cellSpanMode = spanModeOf(ctx.shared.kordocLayout)
+            if (cellSpanMode && !ph?.prefix) {
+              const spans = extractRunSpans(el, ctx, cellSpanMode, cellSpanMode !== "kordoc")
               if (spans && spans.map(s => s.text).join("").replace(/[ \t]+/g, " ").trim() === text) {
                 cellBlock.spans = spans
               }
@@ -217,17 +220,29 @@ function walkSection(
               const eff = ind.left + Math.max(0, ind.intent)
               if (eff > 0) block.indent = eff
             }
-            // 왕복 채널(자사 생성 default 레이아웃 한정) — 인라인 강조 span·인용 복원
-            if (!headingLevel && ctx.shared.kordocLayout === "default") {
+            // indent 소비 (v4.0.5) — 자사 gongmun 파일의 md 리스트 충돌 부호('- '·'1) ')는
+            // 재생성 시 md 파서가 list_item으로 선점해 리터럴 부호 재분류(gen-gongmun-fit)가
+            // 못 받고 depth0으로 붕괴한다. paraPr 들여쓰기를 run 글자크기(=levelIndent
+            // 단위)로 역산해 blocksToMarkdown이 2칸/단계 선행 공백을 방출하게 한다
+            if (ctx.shared.kordocLayout === "gongmun" && block.indent && /^(?:-|\d{1,3}\)) /.test(text)) {
+              const depth = gongmunDepthFromIndent(el, block.indent, ctx)
+              if (depth) block.listDepth = depth
+            }
+            // 왕복 채널(자사 생성 파일 + 외래 실속성) — 인라인 강조 span·인용 복원
+            const spanMode = spanModeOf(ctx.shared.kordocLayout)
+            if (!headingLevel && spanMode) {
               if (!ph?.prefix) {
-                const spans = extractRunSpans(el, ctx)
+                const spans = extractRunSpans(el, ctx, spanMode, spanMode === "gongmun")
                 // 무결성 가드: span 연결이 블록 텍스트와 일치할 때만 (cleanText 변형과
                 // 어긋난 문단은 평문 유지 — 마커가 본문을 오염시키지 않게)
                 if (spans && spans.map(s => s.text).join("").replace(/[ \t]+/g, " ").trim() === text) {
                   block.spans = spans
                 }
               }
-              if (el.getAttribute("paraPrIDRef") === KORDOC_PARA_QUOTE) block.quote = true
+              // 인용 paraPr 규약은 자사 파일 한정(외래는 무규약) — gongmun도 기본
+              // 0~7 paraPr 블록을 공유하므로 6번=인용 유효 (실측 프리셋 인용은 ※ 문단으로
+              // 방출돼 여기 안 옴 — 글리프 재분류가 왕복 담당)
+              if (spanMode !== "foreign" && el.getAttribute("paraPrIDRef") === KORDOC_PARA_QUOTE) block.quote = true
             }
             blocks.push(block)
           } else {
@@ -789,13 +804,30 @@ const KORDOC_CHAR_CODE = "4"
 const KORDOC_PARA_QUOTE = "6"
 
 /**
- * 문단 직계 run들의 인라인 강조 span 추출 — kordoc 생성 default 레이아웃 파일 한정
- * (호출부가 shared.kordocLayout === "default"로 게이트). 볼드/이탤릭은 charPr id가
- * 아니라 styleMap 실속성(<hh:bold/> 등)으로 읽고, 코드만 고정 id로 식별한다.
+ * run-span 채널 모드 (v4.0.5 확장) — kordoc: 자사 default 레이아웃(고정 id 규약 전부),
+ * gongmun: 자사 공문서 레이아웃(기본 charPr 0~10 블록은 default와 동일 — id4 code 유효.
+ * 단 구조 볼드(report 1단계 □ 전체 CHAR_BOLD 등)가 있어 혼합 가드 필수),
+ * foreign: 메타 없는 외래 한컴 문서(실속성 볼드/이탤릭만 — id 규약 없음).
+ * 미지의 자사 레이아웃 값은 null — 채널 꺼짐 (id 재배치 오검출 가드).
+ */
+type SpanMode = "kordoc" | "gongmun" | "foreign"
+
+function spanModeOf(layout: string | null | undefined): SpanMode | null {
+  if (layout === "default") return "kordoc"
+  if (layout === "gongmun") return "gongmun"
+  if (!layout) return "foreign"
+  return null
+}
+
+/**
+ * 문단 직계 run들의 인라인 강조 span 추출. 볼드/이탤릭은 charPr id가
+ * 아니라 styleMap 실속성(<hh:bold/> 등)으로 읽고, 코드만 고정 id로 식별한다(자사 한정).
  * 개체(표·이미지·수식 등)나 run 외 요소가 섞인 문단, 서식 span이 하나도 없는 문단은
  * null — 평문 경로 유지 (마커 재방출 이득이 없으면 켜지 않는다).
+ * requireMixed: 무서식 span과 서식 span이 공존할 때만 인정 — 전체가 서식인 문단은
+ * 구조적 서식(gongmun 1단계 볼드, 표 헤더행 볼드 등)일 개연성이 높아 마커를 억제한다.
  */
-function extractRunSpans(para: Element, ctx: WalkCtx): IRSpan[] | null {
+function extractRunSpans(para: Element, ctx: WalkCtx, mode: SpanMode, requireMixed: boolean): IRSpan[] | null {
   const styleMap = ctx.styleMap
   if (!styleMap) return null
   const spans: IRSpan[] = []
@@ -833,7 +865,7 @@ function extractRunSpans(para: Element, ctx: WalkCtx): IRSpan[] | null {
     const prId = child.getAttribute("charPrIDRef") ?? ""
     const cp = styleMap.charProperties.get(prId)
     const span: IRSpan = { text }
-    if (prId === KORDOC_CHAR_CODE) span.code = true
+    if (mode !== "foreign" && prId === KORDOC_CHAR_CODE) span.code = true
     else {
       if (cp?.bold) span.bold = true
       if (cp?.italic) span.italic = true
@@ -841,5 +873,47 @@ function extractRunSpans(para: Element, ctx: WalkCtx): IRSpan[] | null {
     if (span.bold || span.italic || span.code) styled = true
     spans.push(span)
   }
-  return styled && spans.length > 0 ? spans : null
+  if (!styled || spans.length === 0) return null
+  // 인접 동일 서식 span 병합 — 한컴은 편집 이력 경계에서 같은 서식 run을 임의 분할
+  // 하므로(외래 문서) 그대로 두면 run마다 마커 쌍이 생긴다('**안****녕**' 오염)
+  const merged: IRSpan[] = []
+  for (const s of spans) {
+    const last = merged[merged.length - 1]
+    if (last && !!last.bold === !!s.bold && !!last.italic === !!s.italic && !!last.code === !!s.code) {
+      last.text += s.text
+    } else {
+      merged.push(s)
+    }
+  }
+  if (requireMixed && !merged.some((s) => !(s.bold || s.italic || s.code))) return null
+  return merged
+}
+
+/**
+ * gongmun levelIndent 역산 (v4.0.5) — left = depth × 본문크기(standard/report) 또는
+ * 개조식 반계단(1.0/1.5/2.0, 이후 +0.5/단계) × 본문크기 HWPUNIT. 단위는 문단 첫 run의
+ * charPr 글자크기(pt×100 = HWPUNIT)로 도출 — 생성기 levelIndent가 bodyHeight를 쓰는
+ * 것의 미러. 부호 시퀀스상 md 충돌 부호('-'·'*'·'N)')는 전부 법정 2단계에서만 나오므로
+ * 역산 결과는 사실상 2 — 그래도 파일 자체가 정본이 되게 지문으로 산출한다.
+ */
+function gongmunDepthFromIndent(para: Element, left: number, ctx: WalkCtx): number | null {
+  const styleMap = ctx.styleMap
+  if (!styleMap) return null
+  let unit = 0
+  const kids = para.childNodes
+  for (let i = 0; i < (kids?.length ?? 0); i++) {
+    const child = kids[i] as Element
+    if (child.nodeType !== 1) continue
+    const tag = (child.tagName || child.localName || "").replace(/^[^:]+:/, "")
+    if (tag !== "run" && tag !== "r") continue
+    const size = styleMap.charProperties.get(child.getAttribute("charPrIDRef") ?? "")?.fontSize
+    if (size) unit = size * 100
+    break
+  }
+  if (!unit) return null
+  const r = left / unit
+  const nearInt = Math.round(r)
+  // 정수배 = standard/report(depth=r), x.5 계단 = 개조식(depth = 2r-1: 1.5→2, 2.5→4)
+  const depth = Math.abs(r - nearInt) < 0.2 ? nearInt : Math.round(2 * r - 1)
+  return depth >= 1 && depth < 8 ? depth : null
 }

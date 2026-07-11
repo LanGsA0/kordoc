@@ -86,3 +86,44 @@ describe("v4.0.5 왕복 채널 (P2)", () => {
     assert.match(md2, /3\.\s*셋/)
   })
 })
+
+describe("v4.0.5 gongmun 인라인 강조 + 리스트 depth 소비", () => {
+  it("gongmun 인라인 강조 왕복 — 혼합 span만 마커 복원", async () => {
+    const md = "1. 항목 **강조** 포함\n"
+    const md2 = await roundtrip(md, { gongmun: { preset: "기안문" } })
+    assert.match(md2, /1\. 항목 \*\*강조\*\* 포함/, `인라인 볼드 복원: ${md2}`)
+  })
+
+  it("비실측 report 1단계 구조 볼드는 마커 억제 (전체 볼드 ≠ 인라인 강조)", async () => {
+    // preset 기안문 + numbering report → depth0 항목 전체가 CHAR_BOLD (정부 보고서 관행)
+    const md2 = await roundtrip("- 대항목 하나\n  - 중항목\n", { gongmun: { preset: "기안문", numbering: "report" } })
+    assert.ok(!md2.includes("**"), `구조 볼드 미방출: ${md2}`)
+    assert.match(md2, /□ 대항목 하나/)
+  })
+
+  it("'1)' depth2 왕복 — 선행 공백 방출로 2차 생성 depth 보존 (indent 소비)", async () => {
+    const opt = { gongmun: { preset: "기안문" as const } }
+    const md1 = await roundtrip("1. 상위\n  가. 중간\n    1) 세부 하나\n    2) 세부 둘\n  나. 중간 둘\n", opt)
+    assert.match(md1, /^ {4}1\) 세부 하나$/m, `depth2 선행 공백: ${JSON.stringify(md1)}`)
+    // 2차 생성 수렴 — depth 붕괴('1)' → '2.') 없음
+    const md2 = await roundtrip(md1, opt)
+    assert.equal(md2, md1, "2차 왕복 고정점")
+    assert.match(md2, /나\. 중간 둘/, "depth1 형제 순번 보존")
+  })
+
+  it("report '-' depth2 왕복 — □ 승격 없이 2차 생성 수렴", async () => {
+    const opt = { gongmun: { preset: "보고서" as const } }
+    const md1 = await roundtrip("- 대항목\n  - 중항목\n    - 소항목 **강조**\n", opt)
+    assert.match(md1, /^ {4}- 소항목 \*\*강조\*\*$/m, `depth2 '-' 선행 공백+강조: ${JSON.stringify(md1)}`)
+    const md2 = await roundtrip(md1, opt)
+    assert.equal(md2, md1, "2차 왕복 고정점 — '-'가 □로 승격되지 않음")
+  })
+
+  it("개조식 '-' depth2(반계단 1.5자 들여쓰기) 역산", async () => {
+    const opt = { gongmun: { preset: "개조식" as const, cover: false, toc: false } }
+    const md1 = await roundtrip("# 제목\n\n- 대항목\n  - 중항목\n    - 소항목\n", opt)
+    assert.match(md1, /^ {4}- 소항목$/m, `개조식 depth2 선행 공백: ${JSON.stringify(md1)}`)
+    const md2 = await roundtrip(md1, opt)
+    assert.equal(md2, md1, "2차 왕복 고정점")
+  })
+})

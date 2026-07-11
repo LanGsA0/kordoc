@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.5] - 2026-07-12
+
+v4.0.4 플랜 이월 🟡 3건 마감 — 인라인 강조 채널의 외래·gongmun 일반화 +
+gongmun 리스트 depth 왕복. 생성 경로 무변경(npm 4.0.4 대비 대표 10케이스
+ZIP 실파일 60개 바이트 동일 확증 — 시각 오라클 렌더 등가). 게이트: 테스트
+1,019 / bench:gate 전 체인 / HWPX 코퍼스 전 지표 baseline 동일(recall 1.0).
+
+### Added
+
+- **외래 한컴 문서 볼드/이탤릭 일반화**: kordoc 메타 없는 HWPX도 charPr
+  실속성(`<hh:bold/>`·`<hh:italic/>`)으로 인라인 강조를 복원해 `**`·`*` 마커
+  재방출. 한컴이 편집 이력 경계에서 같은 서식 run을 임의 분할하는 것에 대비해
+  인접 동일 서식 span을 병합(`**안****녕**` 오염 방지). 자사 id 규약(코드 id4·
+  인용 paraPr6)은 외래에 미적용. 셀은 혼합 가드(무서식+서식 span 공존 시만) —
+  헤더행·라벨열의 전체 볼드는 구조 서식이라 마커 억제.
+  채점기 선행 검증: mdToPlain이 bare 별표(=마커, escapeGfm이 리터럴을 전부
+  이스케이프)를 제거하되 HTML 병합표 라인(이스케이프 없는 경로, 중첩표 후행
+  포함)은 제외 — 결재문서 리터럴 별표 마스킹 훼손 없이 recall 조각화 차단.
+- **gongmun 레이아웃 인라인 강조 왕복**: run-span 채널을 kordoc-layout
+  "gongmun"까지 확장 (기본 charPr 0~10 블록은 default와 동일 — id4 code·
+  paraPr6 인용 유효). 혼합 가드로 구조 볼드(비실측 report 1단계 □ 전체
+  CHAR_BOLD, 표 헤더행)와 인라인 강조를 구분 — 부호 run이 무서식이라 진짜
+  인라인 강조는 항상 혼합이 된다.
+- **IRBlock.indent 소비 — gongmun 리스트 depth 왕복** (`IRBlock.listDepth`):
+  md 리스트 문법과 충돌하는 부호('`- `'·'`1) `')는 재생성 시 md 파서가
+  list_item으로 선점해 리터럴 부호 재분류가 못 받고 depth0으로 붕괴('1)'→'2.',
+  '-'→□ 승격 + 후속 형제 순번 오염). paraPr 들여쓰기를 run 글자크기(=levelIndent
+  단위, 개조식 반계단 역산 포함)로 역산해 blocksToMarkdown이 2칸/단계 선행
+  공백을 방출 — 기안문·보고서·개조식 2차 왕복 고정점 검증. 알려진 한계:
+  'ㆍ'(depth3~7 공용 부호)·부호생략 문단의 4단계+ 구분은 글리프 재분류 상한
+  (depth3)에 수렴, '`* `' 부호(press)는 escapeGfm 얽힘으로 이월.
+
 ## [4.0.4] - 2026-07-12
 
 v4.0.3 이후 미발행 작업 3회분을 단일 릴리스로 통합(npm 연속 버전 유지) —

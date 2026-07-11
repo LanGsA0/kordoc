@@ -144,10 +144,10 @@ describe("markdownToHwpx", () => {
     }
   })
 
-  it("외래(비 kordoc) hwpx는 run-span 채널이 꺼진다 — 오검출 가드 (v4.0.6 회귀)", async () => {
+  it("외래(비 kordoc) hwpx — 실속성 볼드는 복원, 자사 id 규약(코드·인용)은 꺼진다 (v4.0.5 일반화)", async () => {
     // generator 산출물에서 content.hpf의 kordoc 메타만 제거해 외래 파일을 모사
     const JSZip = (await import("jszip")).default
-    const buf = await markdownToHwpx("본문 **굵게**\n\n> 인용문\n")
+    const buf = await markdownToHwpx("본문 **굵게** 평문 `코드`\n\n> 인용문\n")
     const zip = await JSZip.loadAsync(buf)
     const hpf = await zip.file("Contents/content.hpf")!.async("string")
     zip.file("Contents/content.hpf", hpf.replace(/<opf:metadata>[\s\S]*?<\/opf:metadata>\s*/, ""))
@@ -155,9 +155,43 @@ describe("markdownToHwpx", () => {
     const result = await parse(foreign)
     assert.equal(result.success, true)
     if (result.success) {
-      assert.ok(!result.markdown.includes("**"), "외래 파일엔 강조 마커 미방출")
+      assert.ok(result.markdown.includes("**굵게**"), "외래 실속성 볼드 마커 방출")
+      assert.ok(!result.markdown.includes("`"), "외래 파일엔 자사 코드 id 규약 미적용")
       assert.ok(!/^> /m.test(result.markdown), "외래 파일엔 인용 접두 미방출")
-      assert.ok(result.markdown.includes("본문 굵게"), "본문 텍스트는 보존")
+      assert.ok(result.markdown.includes("본문"), "본문 텍스트는 보존")
+    }
+  })
+
+  it("외래 hwpx 인접 동일서식 run 분할은 마커 1쌍으로 병합 (v4.0.5)", async () => {
+    const JSZip = (await import("jszip")).default
+    const buf = await markdownToHwpx("본문 **굵게** 평문\n")
+    const zip = await JSZip.loadAsync(buf)
+    const hpf = await zip.file("Contents/content.hpf")!.async("string")
+    zip.file("Contents/content.hpf", hpf.replace(/<opf:metadata>[\s\S]*?<\/opf:metadata>\s*/, ""))
+    // 한컴 편집 이력 run 분할 모사: bold run을 두 개로 쪼갬
+    const sec = await zip.file("Contents/section0.xml")!.async("string")
+    zip.file("Contents/section0.xml", sec.replace(
+      '<hp:run charPrIDRef="1"><hp:t>굵게</hp:t></hp:run>',
+      '<hp:run charPrIDRef="1"><hp:t>굵</hp:t></hp:run><hp:run charPrIDRef="1"><hp:t>게</hp:t></hp:run>'))
+    const result = await parse(await zip.generateAsync({ type: "arraybuffer" }))
+    assert.equal(result.success, true)
+    if (result.success) {
+      assert.ok(result.markdown.includes("**굵게**"), `분할 run 병합 재방출: ${result.markdown}`)
+      assert.ok(!result.markdown.includes("****"), "run 경계 마커 오염 없음")
+    }
+  })
+
+  it("외래 hwpx 전체 볼드 셀은 마커 억제(구조 서식), 혼합 셀만 복원 (v4.0.5)", async () => {
+    const JSZip = (await import("jszip")).default
+    const buf = await markdownToHwpx("| 라벨 | 값 |\n|---|---|\n| **전부볼드** | 평문 **부분** |\n")
+    const zip = await JSZip.loadAsync(buf)
+    const hpf = await zip.file("Contents/content.hpf")!.async("string")
+    zip.file("Contents/content.hpf", hpf.replace(/<opf:metadata>[\s\S]*?<\/opf:metadata>\s*/, ""))
+    const result = await parse(await zip.generateAsync({ type: "arraybuffer" }))
+    assert.equal(result.success, true)
+    if (result.success) {
+      assert.ok(result.markdown.includes("| 전부볼드 |"), `전체 볼드 셀 억제: ${result.markdown}`)
+      assert.ok(result.markdown.includes("평문 **부분**"), "혼합 셀은 복원")
     }
   })
 

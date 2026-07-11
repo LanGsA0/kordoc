@@ -401,7 +401,11 @@ export function blocksToMarkdown(blocks: IRBlock[]): string {
         continue
       }
 
-      // 인라인 강조 run-span (왕복 채널 — kordoc 생성 파일 한정 복원) → 마커 재방출.
+      // gongmun 리스트 depth 선행 공백 (v4.0.5) — sanitizeText가 선두 공백을 지우므로
+      // 텍스트가 아니라 방출 시점에 붙인다. 2칸/단계 = md-runs 리스트 그리드와 동일
+      const listIndent = block.listDepth ? "  ".repeat(block.listDepth) : ""
+
+      // 인라인 강조 run-span (왕복 채널 — 자사 생성 파일 + 외래 실속성 복원) → 마커 재방출.
       // 마커 자체는 이스케이프 대상이 아니므로 span 내부 텍스트만 escapeGfm 후 감싼다
       if (block.spans?.length) {
         let rendered = spansToMarkdown(block.spans)
@@ -410,7 +414,7 @@ export function blocksToMarkdown(blocks: IRBlock[]): string {
           if (href) rendered = `[${rendered}](${href})`
         }
         if (block.footnoteText) rendered += ` (주: ${block.footnoteText})`
-        lines.push(block.quote ? "> " + rendered : rendered, "")
+        lines.push(block.quote ? "> " + rendered : listIndent + rendered, "")
         continue
       }
 
@@ -425,7 +429,7 @@ export function blocksToMarkdown(blocks: IRBlock[]): string {
         text += ` (주: ${block.footnoteText})`
       }
 
-      lines.push(block.quote ? "> " + escapeGfm(text) : escapeGfm(text), "")
+      lines.push(block.quote ? "> " + escapeGfm(text) : listIndent + escapeGfm(text), "")
     } else if (block.type === "table" && block.table) {
       // 테이블 앞에 빈 줄 보장 (마크다운 렌더링 필수)
       if (lines.length > 0 && lines[lines.length - 1] !== "") {

@@ -89,6 +89,20 @@ export function mdToPlain(md) {
   footnoteCount = (s.match(/\(주: /g) ?? []).length
   s = s.replace(/\(주: /g, " (")
 
+  // 굵게/기울임 bare 별표 제거 (v4.0.5 외래 볼드 일반화 대응) — GFM 본문·셀은
+  // escapeGfm이 리터럴 별표를 전부 \*로 이스케이프하므로, 이스케이프 안 된 별표는
+  // 파서가 방출한 강조 마커뿐이다. 마커가 단어 중간에 오면 normKey에 별표가 끼어
+  // GT 부분 문자열 매칭이 조각나므로(거짓 recall 감점) 제거가 대칭이다. 단 HTML
+  // 병합표 셀 라인(<td>/<th>)은 이스케이프 없이 원문을 방출하고 span 마커도 없는
+  // 경로라, 그 라인의 bare 별표는 전부 리터럴 마스킹('******' 결재문서) — 제외한다.
+  // 중첩표 셀은 </table> 뒤 같은 라인에 후행 문단이 이어지므로 표 태그 계열 전부가
+  // 지문이다. 반드시 HTML 태그 제거보다 먼저 (라인의 태그 지문이 판별 근거).
+  s = s.split("\n").map((line) =>
+    /<\/?(?:table|thead|tbody|tr|td|th)\b/i.test(line)
+      ? line
+      : line.replace(/\\\*/g, "\x02").replace(/\*/g, "").replace(/\x02/g, "\\*"),
+  ).join("\n")
+
   // HTML 테이블 태그(병합표 출력) + <br>
   s = s.replace(/<\/?(?:table|thead|tbody|tr|td|th)\b[^>]*>/gi, " ")
   s = s.replace(/<br\s*\/?>/gi, "\n")
@@ -104,10 +118,6 @@ export function mdToPlain(md) {
   // 헤딩 prefix, 수평선
   s = s.replace(/^#{1,6}\s+/gm, "")
   s = s.replace(/^\s*---\s*$/gm, " ")
-  // 굵게/기울임 래퍼(**, *)는 굳이 제거하지 않는다.
-  // 래핑된 본문은 정렬 시 부분 문자열로 그대로 매칭되고, 잔여 별표는 구두점이라
-  // phantom(문자/숫자만 카운트)에 포함되지 않는다. 정규식 unwrap은 리터럴 별표
-  // 마스킹('****9****' 결재문서 등)을 훼손하므로 사용하지 않는다.
   // 마크다운 이스케이프 역변환
   s = unescapeMd(s)
 

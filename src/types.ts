@@ -45,7 +45,7 @@ export interface IRBlock {
   footnoteText?: string
   /** 이미지 데이터 (type="image"일 때) */
   imageData?: ImageData
-  /** 인라인 강조 run-span (선택 — 현재 kordoc 생성 hwpx 왕복 채널만 채움).
+  /** 인라인 강조 run-span (선택 — kordoc 생성 hwpx 왕복 채널 + 외래 실속성 볼드/이탤릭).
    *  존재하면 마크다운 변환이 **·*·` 마커를 재방출한다 */
   spans?: IRSpan[]
   /** 인용문 문단 (선택 — kordoc 생성 hwpx 왕복 채널) — 마크다운 변환이 "> " 접두 재방출 */
@@ -56,6 +56,12 @@ export interface IRBlock {
    * depth 재유도·양식 분석 등 소비자 몫 (v4.0.4)
    */
   indent?: number
+  /**
+   * gongmun 리스트 단계(1~7, 선택) — indent를 levelIndent 단위로 역산한 소비 결과
+   * (v4.0.5). md 리스트 문법과 충돌하는 부호('- '·'1) ') 문단에만 채워지며,
+   * 마크다운 변환이 2칸/단계 선행 공백을 방출해 재생성 시 depth가 복원된다
+   */
+  listDepth?: number
 }
 
 /** 추출된 이미지 바이너리 데이터 */
