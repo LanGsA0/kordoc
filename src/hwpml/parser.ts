@@ -76,7 +76,7 @@ export function parseHwpmlDocument(buffer: ArrayBuffer, options?: ParseOptions):
     sectionIdx++
     if (pageFilter && !pageFilter.has(sectionIdx)) continue
 
-    parseSection(el, blocks, paraShapeMap, sectionIdx, warnings)
+    parseSection(el, blocks, paraShapeMap, sectionIdx, warnings, options?.keepTrailingEmptyCols ?? false)
   }
 
   // ─── 헤딩 트리(outline) 구성 ──────────────────────────
@@ -133,8 +133,9 @@ function parseSection(
   paraShapeMap: Map<string, ParaShapeInfo>,
   sectionNum: number,
   warnings: ParseWarning[],
+  keep: boolean,
 ): void {
-  walkContent(section, blocks, paraShapeMap, sectionNum, warnings, false)
+  walkContent(section, blocks, paraShapeMap, sectionNum, warnings, false, keep)
 }
 
 /**
@@ -148,6 +149,7 @@ function walkContent(
   sectionNum: number,
   warnings: ParseWarning[],
   inHeaderFooter: boolean,
+  keep: boolean,
   depth: number = 0,
 ): void {
   if (depth > MAX_XML_DEPTH) return
@@ -167,26 +169,26 @@ function walkContent(
         parseParagraph(el, blocks, paraShapeMap, sectionNum)
         // HML의 표는 <P><TEXT>… 안에 앵커로 들어있다 — 텍스트만 뽑고 지나치면
         // 표 전체가 소실된다 (해수부 공고 코퍼스에서 recall 0.23 실측)
-        walkTablesInP(el, blocks, paraShapeMap, sectionNum, warnings)
+        walkTablesInP(el, blocks, paraShapeMap, sectionNum, warnings, keep)
       }
       continue
     }
 
     if (tag === "TABLE") {
       if (!inHeaderFooter) {
-        parseTable(el, blocks, paraShapeMap, sectionNum, warnings)
+        parseTable(el, blocks, paraShapeMap, sectionNum, warnings, keep)
       }
       continue
     }
 
     // PARALIST, SUBLIST, SECTION 내부 등 — 재귀
     if (tag === "PARALIST" || tag === "SECTION" || tag === "COLDEF") {
-      walkContent(el, blocks, paraShapeMap, sectionNum, warnings, inHeaderFooter, depth + 1)
+      walkContent(el, blocks, paraShapeMap, sectionNum, warnings, inHeaderFooter, keep, depth + 1)
       continue
     }
 
     // TEXT, SECDEF 등 내부에서도 P/TABLE이 중첩될 수 있음 — 재귀
-    walkContent(el, blocks, paraShapeMap, sectionNum, warnings, inHeaderFooter, depth + 1)
+    walkContent(el, blocks, paraShapeMap, sectionNum, warnings, inHeaderFooter, keep, depth + 1)
   }
 }
 
@@ -201,6 +203,7 @@ function walkTablesInP(
   paraShapeMap: Map<string, ParaShapeInfo>,
   sectionNum: number,
   warnings: ParseWarning[],
+  keep: boolean,
   depth: number = 0,
 ): void {
   if (depth > MAX_XML_DEPTH) return
@@ -210,11 +213,11 @@ function walkTablesInP(
     if (el.nodeType !== 1) continue
     const tag = localName(el)
     if (tag === "TABLE") {
-      parseTable(el, blocks, paraShapeMap, sectionNum, warnings)
+      parseTable(el, blocks, paraShapeMap, sectionNum, warnings, keep)
       continue
     }
     if (tag === "FOOTNOTE" || tag === "ENDNOTE" || tag === "HEADER" || tag === "FOOTER") continue
-    walkTablesInP(el, blocks, paraShapeMap, sectionNum, warnings, depth + 1)
+    walkTablesInP(el, blocks, paraShapeMap, sectionNum, warnings, keep, depth + 1)
   }
 }
 
@@ -276,6 +279,7 @@ function parseTable(
   paraShapeMap: Map<string, ParaShapeInfo>,
   sectionNum: number,
   warnings: ParseWarning[],
+  keep: boolean,
 ): void {
   const cells: CellContext[] = []
   const rowCount = parseInt(el.getAttribute("RowCount") ?? "0", 10)
@@ -333,7 +337,7 @@ function parseTable(
     row.map(cell => cell ?? { text: "", colSpan: 1, rowSpan: 1 })
   )
 
-  const table = buildTable(cellRows)
+  const table = buildTable(cellRows, { keepAnchoredEmptyCols: keep })
 
   // 표 캡션(SHAPEOBJECT > CAPTION) — 파서가 이제껏 버리던 도형 캡션 텍스트를
   // 별도 문단으로 보존한다. collectCharText가 SHAPEOBJECT를 통째로 스킵해

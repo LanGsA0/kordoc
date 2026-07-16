@@ -157,6 +157,10 @@ export interface ParseOptions {
   onProgress?: (current: number, total: number) => void
   /** PDF 머리글/바닥글 자동 제거 */
   removeHeaderFooter?: boolean
+  /** 표 오른쪽 끝의 빈 열(서식 문서의 입력란) 보존 (#47).
+   *  기본 false: 마크다운 가독성을 위해 후행 빈 열을 트림.
+   *  양식 인식 경로(parse_form·fill)는 내부적으로 항상 켠다. */
+  keepTrailingEmptyCols?: boolean
   /** 원본 파일 경로 (DRM COM fallback에 필요, 내부 전용) */
   filePath?: string
   /**

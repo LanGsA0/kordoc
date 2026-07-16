@@ -58,6 +58,8 @@ export interface SectionShared {
   /** content.hpf kordoc-layout 메타 ("default"|"gongmun") — 자사 생성 파일 왕복 채널
    *  게이트. null/미설정 = 외래 파일 (id 기반 인라인 강조·인용 복원 꺼짐) */
   kordocLayout?: string | null
+  /** 표 후행 빈 열(앵커 있는 입력란) 보존 — ParseOptions.keepTrailingEmptyCols (#47) */
+  keepTrailingEmptyCols?: boolean
 }
 
 export function createSectionShared(): SectionShared {

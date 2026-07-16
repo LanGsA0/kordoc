@@ -471,7 +471,8 @@ server.tool(
   async ({ file_path }) => {
     try {
       const { buffer } = readValidatedFile(file_path)
-      const result = await parse(buffer)
+      // 서식 입력란(빈 후행 열)이 필드로 잡히도록 보존 (#47)
+      const result = await parse(buffer, { keepTrailingEmptyCols: true })
 
       if (!result.success) {
         return {
@@ -580,8 +581,8 @@ server.tool(
         }
       }
 
-      // ─── 일반 경로: parse → fill → output ───
-      const result = await parse(buffer)
+      // ─── 일반 경로: parse → fill → output ─── (양식 입력란 보존, #47)
+      const result = await parse(buffer, { keepTrailingEmptyCols: true })
       if (!result.success) {
         return {
           content: [{ type: "text", text: `파싱 실패: ${result.error}` }],

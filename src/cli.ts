@@ -25,6 +25,7 @@ program
   .option("--no-header-footer", "PDF 머리글/바닥글 자동 제거 끄기 (기본: 제거함)")
   .option("--formula-ocr", "PDF 수식 OCR 활성화 (MFD+MFR ONNX, 첫 사용 시 모델 ~155MB 자동 다운로드)")
   .option("--dedupe-headers", "HWP5 레이아웃 표 페이지 반복 러닝 헤더 중복 제거 (기본 off — 붙임별 재번호 오삭제 주의)")
+  .option("--keep-empty-cols", "표 오른쪽 끝 빈 열(서식 입력란) 보존 (#47, 기본 off: 후행 빈 열 트림)")
   .option("--inline-images", "이미지를 base64 data URI 로 마크다운에 인라인 (BMP→PNG 압축, HWP5 전용 — 인라인된 경우만 파일 미저장, 그 외 포맷은 저장 유지)")
   .option("--silent", "진행 메시지 숨기기")
   .action(async (files: string[], opts) => {
@@ -63,6 +64,7 @@ program
         if (opts.headerFooter === false) parseOptions.removeHeaderFooter = false
         if (opts.formulaOcr) parseOptions.formulaOcr = true
         if (opts.dedupeHeaders) parseOptions.dedupeRunningHeaders = true
+        if (opts.keepEmptyCols) parseOptions.keepTrailingEmptyCols = true
         if (opts.inlineImages) parseOptions.inlineImages = true
         if (!opts.silent) {
           parseOptions.onProgress = (current: number, total: number) => {
@@ -197,9 +199,9 @@ program
 
       if (!opts.silent) process.stderr.write(`[kordoc] ${basename(absPath)} 파싱 중...\n`)
 
-      // --dry-run: 필드 목록만 출력
+      // --dry-run: 필드 목록만 출력 — 서식 입력란(빈 후행 열)이 목록에 나오도록 보존 (#47)
       if (opts.dryRun) {
-        const result = await parse(arrayBuffer)
+        const result = await parse(arrayBuffer, { keepTrailingEmptyCols: true })
         if (!result.success) {
           process.stderr.write(`[kordoc] 파싱 실패: ${result.error}\n`)
           process.exit(1)
@@ -305,8 +307,8 @@ program
         }
       }
 
-      // ─── 일반 경로: parse → fill → output ───
-      const result = await parse(arrayBuffer)
+      // ─── 일반 경로: parse → fill → output ─── (양식 입력란 보존, #47)
+      const result = await parse(arrayBuffer, { keepTrailingEmptyCols: true })
       if (!result.success) {
         process.stderr.write(`[kordoc] 파싱 실패: ${result.error}\n`)
         process.exit(1)

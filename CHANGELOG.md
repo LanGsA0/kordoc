@@ -29,10 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **#47 표 오른쪽 끝 빈 열 삭제 — 서식 입력란 소실**: 후행 빈 열 트림을 "셀 앵커
-  없는 유령 열(span 인플레이션)"로 한정. 실제 `<hp:tc>` 앵커가 있는 빈 입력란은
-  보존되어 fill 경로와 일치, 생성→파싱 왕복 열 수 동일. 스프레드시트(XLSX/XLS)는
-  잔여 스타일 셀 정리를 위해 기존 텍스트 기준 트림 유지.
+- **#47 표 오른쪽 끝 빈 열 삭제 — 서식 입력란 소실**: `ParseOptions.
+  keepTrailingEmptyCols` 신설(CLI `--keep-empty-cols`) — 켜면 실제 셀 앵커가 있는
+  빈 입력란 열을 보존하고 앵커 없는 유령 열(span 인플레이션)만 트림한다. **양식
+  경로(parse_form·fill_form·CLI fill)는 내부 상시 ON**이라 fill이 인식하는 입력란이
+  --dry-run 필드 목록에도 그대로 나타난다. 기본 파싱은 종전 트림 유지(마크다운
+  가독성 — 실코퍼스에서 앵커 있는 빈 후행 열이 흔해 기본 보존은 표 구조 대량 변경).
 - **P0**: 인라인 수식 정규식 ReDoS(악성 `$\\\\…` 로 파서 행) · HTML 표
   colspan/rowspan 무클램프(생성기 OOM) · HWP3 압축 해제 폭탄 무가드 ·
   XLSX 셀 ref 행/병합 범위 무클램프(그리드 폭주).

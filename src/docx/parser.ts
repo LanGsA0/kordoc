@@ -526,6 +526,7 @@ function parseTable(
   numbering: Map<string, Map<number, NumberingInfo>>,
   footnotes: Map<string, string>,
   rels: Map<string, string>,
+  keepEmptyCols?: boolean,
 ): IRBlock | null {
   const trElements = getChildElements(tbl, "tr")
   if (trElements.length === 0) return null
@@ -602,7 +603,7 @@ function parseTable(
       })
   )
 
-  const table = buildTable(cellRows)
+  const table = buildTable(cellRows, { keepAnchoredEmptyCols: keepEmptyCols })
   if (table.rows === 0 || table.cols === 0) return null
   return { type: "table", table }
 }
@@ -844,7 +845,7 @@ export async function parseDocxDocument(
         if (imageMap.size > 0) emitParagraphImages(tp, imageMap, linkedImages, blocks)
       }
     } else if (localName === "tbl") {
-      const block = parseTable(el, styles, numbering, footnotes, rels)
+      const block = parseTable(el, styles, numbering, footnotes, rels, options?.keepTrailingEmptyCols)
       if (block) blocks.push(block)
     }
   }

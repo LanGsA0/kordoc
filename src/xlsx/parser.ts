@@ -398,8 +398,7 @@ function sheetToBlocks(
   }
 
   if (cellRows.length > 0) {
-    // 스프레드시트는 스타일만 있는 잔여 셀이 흔해 후행 빈 열을 텍스트 기준으로 전부 트림 (#47)
-    const table = buildTable(cellRows, { trimTrailingEmptyCols: true })
+    const table = buildTable(cellRows)
     if (table.rows > 0) {
       blocks.push({ type: "table", table, pageNumber: sheetIndex + 1 })
     }

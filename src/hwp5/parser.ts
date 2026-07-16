@@ -155,6 +155,7 @@ export function parseHwp5Document(buffer: Buffer, options?: ParseOptions): Inter
 
   const bodyBlocks: IRBlock[] = []
   const doc = createHwp5DocState()
+  doc.keepTrailingEmptyCols = options?.keepTrailingEmptyCols
   let totalDecompressed = 0
   let parsedSections = 0
   for (let si = 0; si < sections.length; si++) {
@@ -505,6 +506,8 @@ export interface Hwp5DocState {
   headerTexts: Set<string>
   headerBlocks: IRBlock[]
   footerBlocks: IRBlock[]
+  /** 표 후행 빈 열(앵커 있는 입력란) 보존 — ParseOptions.keepTrailingEmptyCols (#47) */
+  keepTrailingEmptyCols?: boolean
 }
 
 export function createHwp5DocState(): Hwp5DocState {
@@ -995,7 +998,7 @@ function parseTableControl(ctrl: ParsedCtrl, records: HwpRecord[], ctx: Hwp5Ctx)
   }
 
   const cellRows = arrangeCells(rows, cols, cells)
-  const table = buildTable(cellRows)
+  const table = buildTable(cellRows, { keepAnchoredEmptyCols: ctx.doc.keepTrailingEmptyCols })
   if (caption && table.rows > 0) table.caption = caption
   return table.rows > 0 ? table : null
 }

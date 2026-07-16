@@ -12,8 +12,8 @@ import type { CellCtxEx, TableState, WalkCtx } from "./parser-shared.js"
  * buildTable이 CellContext의 확장 필드를 복사하지 않으므로 cellAddr 좌표
  * (없으면 텍스트+스팬 매칭)로 결과 IRCell을 찾아 재부착한다.
  */
-function buildTableWithCellMeta(state: TableState): IRTable {
-  const table = buildTable(state.rows)
+function buildTableWithCellMeta(state: TableState, keepAnchoredEmptyCols?: boolean): IRTable {
+  const table = buildTable(state.rows, { keepAnchoredEmptyCols })
   if (state.caption) table.caption = state.caption
 
   // 서수 폴백용 앵커 목록 (row-major, 병합 커버 칸 제외) — 소스 tc 수와 1:1일 때만 신뢰
@@ -99,7 +99,7 @@ export function completeTable(
     if (newTable.caption) blocks.push({ type: "paragraph", text: newTable.caption, pageNumber: ctx.sectionNum })
     return parentTable
   }
-  const ir = buildTableWithCellMeta(newTable)
+  const ir = buildTableWithCellMeta(newTable, ctx.shared.keepTrailingEmptyCols)
   const block: IRBlock = { type: "table", table: ir, pageNumber: ctx.sectionNum }
   if (parentTable?.cell) {
     const cell = parentTable.cell

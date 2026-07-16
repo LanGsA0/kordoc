@@ -10,10 +10,10 @@ export const MAX_COLS = 200
 export const MAX_ROWS = 10000
 
 export interface BuildTableOptions {
-  /** 후행 빈 열을 텍스트 기준으로 전부 트림 (스프레드시트용 — 스타일만 있는 잔여 셀 정리).
-   *  기본 false: 실제 셀 앵커가 있는 빈 열(서식 문서의 입력란)은 보존하고,
-   *  앵커 없는 유령 열(span 인플레이션)만 트림한다 (#47). */
-  trimTrailingEmptyCols?: boolean
+  /** 실제 셀 앵커가 있는 빈 후행 열(서식 문서의 입력란)을 보존한다 (#47).
+   *  앵커 없는 유령 열(span 인플레이션)은 이 옵션과 무관하게 트림.
+   *  기본 false: 종전대로 텍스트 기준 전부 트림 (마크다운 가독성·벤치 계약). */
+  keepAnchoredEmptyCols?: boolean
 }
 
 export function buildTable(rows: CellContext[][], options?: BuildTableOptions): IRTable {
@@ -125,14 +125,14 @@ function buildTableDirect(rows: CellContext[][], numRows: number, options?: Buil
   return trimAndReturn(grid, numRows, maxCols, anchorCols, options)
 }
 
-/** 빈 후행 열 제거 후 IRTable 반환 — 기본은 앵커 없는 유령 열만, 스프레드시트는 텍스트 기준 전부 (#47) */
+/** 빈 후행 열 제거 후 IRTable 반환 — 기본 텍스트 기준 전부, keepAnchoredEmptyCols면 앵커 없는 유령 열만 (#47) */
 function trimAndReturn(grid: IRCell[][], numRows: number, maxCols: number, anchorCols: Set<number>, options?: BuildTableOptions): IRTable {
   let effectiveCols = maxCols
   while (effectiveCols > 0) {
     const colEmpty = grid.every(row => !row[effectiveCols - 1]?.text?.trim())
     if (!colEmpty) break
-    // 실제 셀 앵커가 있는 빈 열은 서식 문서의 입력란 — 트림하지 않는다 (#47)
-    if (!options?.trimTrailingEmptyCols && anchorCols.has(effectiveCols - 1)) break
+    // 실제 셀 앵커가 있는 빈 열은 서식 문서의 입력란 — 옵션 시 트림하지 않는다 (#47)
+    if (options?.keepAnchoredEmptyCols && anchorCols.has(effectiveCols - 1)) break
     effectiveCols--
   }
   if (effectiveCols < maxCols && effectiveCols > 0) {
