@@ -67,7 +67,6 @@ export async function watchDirectory(options: WatchOptions): Promise<void> {
   const { dir, outDir, webhook, format = "markdown", pages, silent } = options
 
   if (!existsSync(dir)) throw new Error(`디렉토리를 찾을 수 없습니다: ${dir}`)
-  assertRecursiveWatchSupport()
   if (webhook) validateWebhookUrl(webhook)
   if (outDir) mkdirSync(outDir, { recursive: true })
 
@@ -75,6 +74,10 @@ export async function watchDirectory(options: WatchOptions): Promise<void> {
   log(`[kordoc watch] 감시 시작: ${resolve(dir)}`)
   if (outDir) log(`[kordoc watch] 출력: ${resolve(outDir)}`)
   if (webhook) log(`[kordoc watch] 웹훅: ${webhook}`)
+
+  // 설정 로그 뒤·감시 시작 전에 검사 — 무엇을 하려다 막혔는지 보이고,
+  // 옵션 파싱 계약 테스트(plugin-5)도 Linux+Node<19.1 에서 로그를 관측할 수 있다
+  assertRecursiveWatchSupport()
 
   // 디바운스 맵
   const pending = new Map<string, ReturnType<typeof setTimeout>>()
