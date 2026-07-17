@@ -30,10 +30,12 @@ export interface PageQuality {
   hangulNoBatchimRatio: number
   /** 한글 음절 중 겹받침/희귀 받침 비율 (자연 한국어 <0.06, mojibake ~0.5) */
   hangulRareBatchimRatio: number
-  /** OCR 검토 권장 여부 */
+  /** OCR 검토 권장 여부 (pdfjs 텍스트층 기준 원신호 — OCR 적용 후에도 보존) */
   needsOcr: boolean
   /** needsOcr=true일 때 사유 (단일 신호로 충분, 가장 강한 신호 선택) */
   ocrReason?: "low_text" | "high_pua" | "high_control" | "high_replacement" | "garbled_hangul"
+  /** 이 페이지에 OCR 이 실제 적용되어 본문이 OCR 결과로 대체됨 */
+  ocrApplied?: boolean
 }
 
 /**
@@ -195,7 +197,8 @@ export function summarizeDocumentQuality(pages: PageQuality[]): DocumentQualityS
     pua += p.puaRatio
     if (p.textChars < LOW_TEXT_THRESHOLD) lowText++
     if (p.puaRatio >= HIGH_PUA_THRESHOLD) highPua++
-    if (p.needsOcr) ocrCandidatePages.push(p.page)
+    // OCR 이 이미 적용된 페이지는 후보에서 제외 — "OCR 했는데 또 하라" 자기모순 방지
+    if (p.needsOcr && !p.ocrApplied) ocrCandidatePages.push(p.page)
   }
 
   const n = pages.length

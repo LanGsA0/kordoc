@@ -66,15 +66,20 @@ export const ALL_FORMULA_MODELS: ReadonlyArray<ModelSpec> = [
 ]
 
 /**
- * 환경 변수 `KORDOC_MODEL_CACHE` 가 설정되면 해당 경로를 우선 사용.
- * 없으면 `~/.cache/kordoc/models/pix2text/`.
+ * 모델 캐시 하위 디렉토리 경로. 환경 변수 `KORDOC_MODEL_CACHE` 가 설정되면
+ * 해당 경로를 우선 사용, 없으면 `~/.cache/kordoc/models/<subdir>/`.
+ * (수식 OCR 외 텍스트 OCR 등 다른 모델군도 공용 — subdir 로 격리)
  */
-export function getFormulaModelsDir(): string {
+export function getModelsDir(subdir: string): string {
   const override = process.env.KORDOC_MODEL_CACHE
   if (override && override.trim()) {
-    return join(override, "pix2text")
+    return join(override, subdir)
   }
-  return join(homedir(), ".cache", "kordoc", "models", "pix2text")
+  return join(homedir(), ".cache", "kordoc", "models", subdir)
+}
+
+export function getFormulaModelsDir(): string {
+  return getModelsDir("pix2text")
 }
 
 export interface ModelStatus {
@@ -87,11 +92,10 @@ export interface ModelStatus {
   invalidReason?: string
 }
 
-/** 모든 수식 모델의 존재/유효성 상태 반환 (다운로드 없이 확인만) */
-export async function getFormulaModelStatus(): Promise<ModelStatus[]> {
-  const dir = getFormulaModelsDir()
+/** 지정 모델군의 존재/유효성 상태 반환 (다운로드 없이 확인만) */
+export async function getModelStatusIn(dir: string, specs: ReadonlyArray<ModelSpec>): Promise<ModelStatus[]> {
   const result: ModelStatus[] = []
-  for (const spec of ALL_FORMULA_MODELS) {
+  for (const spec of specs) {
     const localPath = join(dir, spec.filename)
     let exists = false
     try {
@@ -130,6 +134,11 @@ export async function getFormulaModelStatus(): Promise<ModelStatus[]> {
   return result
 }
 
+/** 모든 수식 모델의 존재/유효성 상태 반환 (다운로드 없이 확인만) */
+export async function getFormulaModelStatus(): Promise<ModelStatus[]> {
+  return getModelStatusIn(getFormulaModelsDir(), ALL_FORMULA_MODELS)
+}
+
 export interface DownloadProgress {
   spec: ModelSpec
   /** 현재까지 다운로드한 바이트 */
@@ -144,15 +153,14 @@ export interface DownloadProgress {
 export type ProgressHandler = (p: DownloadProgress) => void
 
 /**
- * 필요한 모든 수식 모델을 다운로드/검증한다.
+ * 지정 모델군을 다운로드/검증한다.
  * - 이미 있고 SHA 일치 → skip
  * - 없음 → 다운로드 후 SHA 검증. 실패 시 파일 삭제.
  */
-export async function ensureFormulaModels(onProgress?: ProgressHandler): Promise<void> {
-  const dir = getFormulaModelsDir()
+export async function ensureModelsIn(dir: string, specs: ReadonlyArray<ModelSpec>, onProgress?: ProgressHandler): Promise<void> {
   await mkdir(dir, { recursive: true })
 
-  for (const spec of ALL_FORMULA_MODELS) {
+  for (const spec of specs) {
     const localPath = join(dir, spec.filename)
 
     if (await isExistingValid(localPath, spec.sha256)) {
@@ -175,6 +183,11 @@ export async function ensureFormulaModels(onProgress?: ProgressHandler): Promise
 
     await downloadToFile(spec, localPath, onProgress)
   }
+}
+
+/** 필요한 모든 수식 모델을 다운로드/검증한다. */
+export async function ensureFormulaModels(onProgress?: ProgressHandler): Promise<void> {
+  return ensureModelsIn(getFormulaModelsDir(), ALL_FORMULA_MODELS, onProgress)
 }
 
 /** 단일 모델만 확인/다운로드 (진단 UI 에서 개별 상태 새로고침용) */

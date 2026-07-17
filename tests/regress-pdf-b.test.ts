@@ -20,7 +20,7 @@ import { parsePdfDocument } from "../src/pdf/parser.js"
 import { extractPageBlocksWithLines } from "../src/pdf/page-blocks.js"
 import { extractWithColumns } from "../src/pdf/columns.js"
 import { removeHeaderFooterBlocks, detectKoreanListBlocks } from "../src/pdf/block-detect.js"
-import { ocrPages } from "../src/ocr/provider.js"
+import { runPdfOcr } from "../src/ocr/pdf-ocr.js"
 import { createPdfImageState, extractPageImages } from "../src/pdf/image-extract.js"
 import { buildTableGrids } from "../src/pdf/line-detector.js"
 import type { LineSegment } from "../src/pdf/line-detector.js"
@@ -189,29 +189,52 @@ describe("결함 4 — top/bottom 라벨 교정 (동작 동일성 고정)", () =
   })
 })
 
-// ─── 5. ocrPages 페이지별 실패 격리 ────────────────────
+// ─── 5. OCR 페이지별 실패 격리 ─────────────────────────
+// (v4.2 재계약: 실패 마커를 본문에 섞지 않고 warnings(OCR_FAILED) 채널로 —
+//  본문 오염이 RAG 청킹·redact·diff 로 유입되던 결함 F7 수리)
+
+/** 최소 2페이지 빈 PDF (pdfium 로드 가능) */
+function tinyTwoPagePdf(): ArrayBuffer {
+  const src = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >> endobj
+trailer << /Root 1 0 R >>`
+  const bytes = new TextEncoder().encode(src)
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+}
 
 describe("결함 5 — 한 페이지 실패가 전체 OCR을 폐기하지 않는다", () => {
-  it("getPage 실패 페이지만 placeholder(pageNumber 포함)로 격리된다", async () => {
-    const fakePage = {
-      getViewport: () => ({ width: 10, height: 10 }),
-      render: () => ({ promise: Promise.reject(new Error("render fail")) }),
-    }
-    const doc = {
-      numPages: 3,
-      getPage: async (n: number) => {
-        if (n === 2) throw new Error("page load fail")
-        return fakePage
+  it("프로바이더가 던진 페이지만 OCR_FAILED 경고로 격리, 나머지는 결과 유지", async () => {
+    const warnings: ParseWarning[] = []
+    const result = await runPdfOcr(
+      tinyTwoPagePdf(),
+      new Set([1, 2]),
+      async (_img, pageNumber) => {
+        if (pageNumber === 2) throw new Error("provider fail")
+        return "첫 페이지 텍스트"
       },
+      warnings,
+    )
+    assert.equal(result.get(1)?.[0]?.text, "첫 페이지 텍스트")
+    assert.equal(result.get(1)?.[0]?.pageNumber, 1)
+    assert.ok(!result.has(2), "실패 페이지는 본문 블록을 만들지 않는다")
+    assert.ok(
+      warnings.some(w => w.code === "OCR_FAILED" && w.page === 2),
+      `실패는 경고 채널로: ${JSON.stringify(warnings)}`,
+    )
+    // 본문 어디에도 실패 마커 텍스트가 없어야 한다
+    for (const blocks of result.values()) {
+      assert.ok(blocks.every(b => !b.text?.includes("OCR 실패")))
     }
-    let providerCalls = 0
-    const blocks = await ocrPages(doc as never, async () => { providerCalls++; return "" }, null, 3)
-    assert.equal(blocks.length, 3, "3페이지 모두 블록 존재 (전체 폐기 금지)")
-    for (let i = 0; i < 3; i++) {
-      assert.equal(blocks[i].text, `[OCR 실패: 페이지 ${i + 1}]`)
-      assert.equal(blocks[i].pageNumber, i + 1, "placeholder에도 pageNumber 필요")
-    }
-    assert.equal(providerCalls, 0)
+  })
+
+  it("빈 텍스트를 돌려준 페이지는 OCR_FAILED 경고 + 블록 없음", async () => {
+    const warnings: ParseWarning[] = []
+    const result = await runPdfOcr(tinyTwoPagePdf(), new Set([1]), async () => "", warnings)
+    assert.equal(result.get(1)?.length ?? 0, 0)
+    assert.ok(warnings.some(w => w.code === "OCR_FAILED" && w.page === 1))
   })
 })
 

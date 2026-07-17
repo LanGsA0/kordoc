@@ -333,6 +333,7 @@ function sheetToBlocks(
   maxRow: number,
   maxCol: number,
   sheetIndex: number,
+  keepAnchoredEmptyCols?: boolean,
 ): IRBlock[] {
   const blocks: IRBlock[] = []
 
@@ -398,7 +399,7 @@ function sheetToBlocks(
   }
 
   if (cellRows.length > 0) {
-    const table = buildTable(cellRows)
+    const table = buildTable(cellRows, { keepAnchoredEmptyCols })
     if (table.rows > 0) {
       blocks.push({ type: "table", table, pageNumber: sheetIndex + 1 })
     }
@@ -497,7 +498,7 @@ export async function parseXlsxDocument(
     try {
       const sheetXml = await sheetFile.async("text")
       const { grid, merges, maxRow, maxCol } = parseWorksheet(sheetXml, sharedStrings, dateXfs, date1904)
-      const sheetBlocks = sheetToBlocks(sheet.name, grid, merges, maxRow, maxCol, i)
+      const sheetBlocks = sheetToBlocks(sheet.name, grid, merges, maxRow, maxCol, i, options?.keepTrailingEmptyCols)
       blocks.push(...sheetBlocks)
     } catch (err) {
       warnings.push({

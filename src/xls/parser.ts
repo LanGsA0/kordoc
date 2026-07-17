@@ -227,6 +227,7 @@ function sheetToBlocks(
   sheetName: string,
   sheet: RawSheet,
   sheetIndex: number,
+  keepAnchoredEmptyCols?: boolean,
 ): IRBlock[] {
   const blocks: IRBlock[] = []
 
@@ -314,7 +315,7 @@ function sheetToBlocks(
   }
 
   if (cellRows.length > 0) {
-    const table = buildTable(cellRows)
+    const table = buildTable(cellRows, { keepAnchoredEmptyCols })
     if (table.rows > 0) {
       blocks.push({ type: "table", table, pageNumber: sheetIndex + 1 })
     }
@@ -427,7 +428,7 @@ export async function parseXlsDocument(
 
     try {
       const { sheet } = extractSheetCells(records, bofIdx, globals.sst, convertNum)
-      const blocks = sheetToBlocks(meta.name, sheet, i)
+      const blocks = sheetToBlocks(meta.name, sheet, i, options?.keepTrailingEmptyCols)
       allBlocks.push(...blocks)
     } catch (e) {
       warnings.push({

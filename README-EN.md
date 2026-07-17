@@ -70,6 +70,12 @@ Beyond plain text extraction, kordoc automates the **entire lifecycle of Korean 
 
 ---
 
+## What's New in v4.2.0
+
+- **👓 Built-in text OCR (PP-OCRv5 korean)**: read scanned/image PDFs with **local inference, no API key** — `parse(buffer, { ocr: true })` / CLI `--ocr` / MCP `parse_document`'s `ocr` option. Models (~18MB) auto-download with SHA-256 verification on first use. Only pages flagged by the quality signals (scans, broken font mappings) are OCR'd — clean pages keep their parsed output — and OCR line boxes are fed through the table-detection pipeline, so **tables survive in scans**. Korean dictionary covers all 11,172 precomposed Hangul syllables; ≈1s per page on CPU.
+- **🩹 HWP3 legacy parser conformance ×3**: stream-consumption defects for tab/field-code/bookmark control chars corrupted all following text, and roman numerals (Ⅰ–Ⅹ), circled digits (①–⑩), quotes, and bullet glyphs silently vanished — fixed by porting follow-up patches from the upstream (rhwp) source.
+- **🐛 Formula-OCR page off-by-one**: `--pages` filtering was shifted by one page and formulas attached to the previous page's blocks (pdfium page indices are 0-based). Also fixed: XLSX/XLS `--keep-empty-cols` wiring gap.
+
 ## What's New in v4.1.0
 
 - **👁️ `render_document` MCP tool (new)**: renders a generated/patched/filled HWPX exactly as typeset and **returns it as a PNG image in the response** — the AI can visually inspect its own output and fix it, closing the generate→render→verify loop inside MCP (typeset cache for Hancom-saved files, reflow engine for generated ones, search-term highlighting).
@@ -290,12 +296,26 @@ const result = await parse(buffer, { pages: "1-3" })      // pages 1–3 only
 const result = await parse(buffer, { pages: [1, 5, 10] })  // specific pages
 ```
 
-### OCR (image-based PDFs)
+### OCR (scanned/image-based PDFs) — built-in engine (v4.2.0+)
+
+```typescript
+// Built-in OCR (PP-OCRv5 korean, ~18MB models auto-downloaded on first use)
+const result = await parse(buffer, { ocr: true })     // only pages that need OCR
+const result = await parse(buffer, { ocr: "force" })  // force-OCR every page
+```
+
+- **No API key or external service** — det (DBNet) + rec (CTC) ONNX inference on local CPU
+  (official PaddlePaddle conversions, Apache-2.0).
+- **Page-precise**: scanned pages and pages with broken ToUnicode mappings (the `needsOcr`
+  signals) are OCR'd; clean pages keep their parsed output.
+- **Tables survive**: OCR line boxes go through the same xy-cut + cluster table detection
+  pipeline, so table structure is reconstructed even from scans.
+- To use an external OCR instead, pass a provider function as before:
 
 ```typescript
 const result = await parse(buffer, {
   ocr: async (pageImage, pageNumber, mimeType) => {
-    return await myOcrService.recognize(pageImage)
+    return await myOcrService.recognize(pageImage) // Claude Vision, Tesseract, ...
   }
 })
 ```
@@ -307,8 +327,8 @@ PDFs often have a text layer with broken ToUnicode/CMap or control characters mi
 ```typescript
 const r = await parsePdf(buffer)
 if (r.success && r.qualitySummary?.needsOcr) {
-  // route to your OCR queue (kordoc ships no built-in OCR)
-  await routeToOcr(buffer, r.qualitySummary.ocrCandidatePages)
+  // retry with the built-in OCR (v4.2.0+) — or route to your own OCR queue
+  const retried = await parse(buffer, { ocr: true })
 }
 
 for (const p of r.pageQuality ?? []) {

@@ -80,4 +80,52 @@ describe("#47 후행 빈 열 보존 (keepTrailingEmptyCols)", () => {
     assert.ok(labels.includes("성명"), `성명 필드 누락: ${labels.join(",")}`)
     assert.ok(labels.includes("연락처"), `연락처 필드 누락: ${labels.join(",")}`)
   })
+
+  it("XLSX 경로에도 옵션이 배선된다 (v4.1.0 리뷰 — 배선 누락 회귀)", async () => {
+    const { parse } = await import("../src/index.js")
+    // 최소 XLSX: A열=라벨, B열=셀 요소는 있지만 빈 값(양식 입력란)
+    const { default: JSZip } = await import("jszip")
+    const zip = new JSZip()
+    zip.file("[Content_Types].xml", `<?xml version="1.0"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`)
+    zip.file("_rels/.rels", `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`)
+    zip.file("xl/workbook.xml", `<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="양식" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`)
+    zip.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+</Relationships>`)
+    zip.file("xl/sharedStrings.xml", `<?xml version="1.0"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="3" uniqueCount="3"><si><t>성명</t></si><si><t>연락처</t></si><si><t></t></si></sst>`)
+    zip.file("xl/worksheets/sheet1.xml", `<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>2</v></c></row>
+    <row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="s"><v>2</v></c></row>
+  </sheetData>
+</worksheet>`)
+    const buf = await zip.generateAsync({ type: "arraybuffer" })
+
+    const off = await parse(buf)
+    assert.ok(off.success)
+    const tOff = off.blocks.filter(b => b.type === "table")[0].table!
+    assert.equal(tOff.cols, 1, "기본값은 종전 트림 유지")
+
+    const on = await parse(buf, { keepTrailingEmptyCols: true })
+    assert.ok(on.success)
+    const tOn = on.blocks.filter(b => b.type === "table")[0].table!
+    assert.equal(tOn.cols, 2, "XLSX 양식의 빈 입력란 열이 보존돼야 한다")
+  })
 })

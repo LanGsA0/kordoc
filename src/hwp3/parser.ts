@@ -36,7 +36,8 @@ const INLINE_CHAR_SHAPE_SIZE = 31 // Hwp3CharShape (rep_char_shape 와 동일)
 // 단위: byte. 동시에 char_count 에서 차지하는 hchar 도 다름 — 아래 EXTRA_HCHAR.
 //
 // rhwp/src/parser/hwp3/mod.rs ch 분기 그대로 옮긴 표.
-//   9   (Tab)         : extra=0 byte, hchar=1
+//   9   (Tab)         : extra=6 byte, hchar=4 — spec §10.5 표 39: hchar+hunit 탭폭+word 점끌기+hchar 닫기
+//                       = 8 byte 구조 (rhwp d89b689 #929 정합 — 2 byte 소비 시 탭마다 desync)
 //   18~21 (각종 번호)  : extra=6 byte, hchar=4
 //   22  (메일머지)     : extra=22 byte, hchar=12
 //   23  (글자겹침)     : extra=8 byte, hchar=5
@@ -49,7 +50,7 @@ const INLINE_CHAR_SHAPE_SIZE = 31 // Hwp3CharShape (rep_char_shape 와 동일)
 //   default (10/11/12/15/16/17/27/29 등): 8 byte 헤더 + 종류별 추가
 type CtrlSimple = { extraBytes: number; extraHchar: number; emit: string | null }
 const SIMPLE_CTRL: ReadonlyMap<number, CtrlSimple> = new Map([
-  [9, { extraBytes: 0, extraHchar: 0, emit: "\t" }],
+  [9, { extraBytes: 6, extraHchar: 3, emit: "\t" }],
   [7, { extraBytes: 6, extraHchar: 3, emit: "￼" }],
   [8, { extraBytes: 6, extraHchar: 3, emit: "￼" }],
   [18, { extraBytes: 6, extraHchar: 3, emit: " " }], // AutoNumber → 공백 (HWP5 패턴)
@@ -299,12 +300,22 @@ function parseCharStream(reader: Reader, charCount: number, ctx: ParaContext): s
         parseParagraphList(reader, ctx)
         break
       }
+      case 5:
+        // 필드 코드 (spec §10.1 표 33): 8 byte 헤더 + header_val1 byte 세부 정보
+        // (rhwp dcf64b4 #877 정합 — 미소비 시 stream desync). 1MB 이상은 비정상.
+        if (headerVal1 > 0 && headerVal1 < 1_000_000) reader.skip(headerVal1)
+        break
+      case 6:
+        // 책갈피 (spec §10.2 표 36): 42 byte total = 8 byte 헤더 + 이름 32 + 종류 2
+        // (rhwp dcf64b4 #877 정합 — 34 byte 미소비 시 이후 문단 전체 오염)
+        reader.skip(34)
+        break
       case 29:
         // 상호참조: header_val1 size raw skip (1MB 이상 비정상)
         if (headerVal1 < 1_000_000) reader.skip(headerVal1)
         break
       default:
-        // ch=2/3/4/5/6/27 등: rhwp mod.rs:1011 의 "알 수 없음" 분기에서
+        // ch=2/3/4/27 등: rhwp mod.rs:1011 의 "알 수 없음" 분기에서
         // header_val1 을 길이로 사용하지 않는다고 명시 ("ch=3 실증: 헤더 직후가 정상 단락
         // 내용이므로 추가 skip 없음"). 즉 8 byte 헤더만 소비하고 다음 char 로.
         // 경고는 첫 등장만 기록 — 본문에 페이지번호/필드코드가 많이 깔린 paragraph 가

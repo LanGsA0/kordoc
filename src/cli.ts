@@ -24,6 +24,8 @@ program
   .option("--format <type>", "출력 형식: markdown (기본), json, chunks (RAG용 구조 청크 JSON — 헤딩·개조식 위계 breadcrumb + 표 독립 청크)", "markdown")
   .option("--no-header-footer", "PDF 머리글/바닥글 자동 제거 끄기 (기본: 제거함)")
   .option("--formula-ocr", "PDF 수식 OCR 활성화 (MFD+MFR ONNX, 첫 사용 시 모델 ~155MB 자동 다운로드)")
+  .option("--ocr", "스캔/이미지 PDF 텍스트 OCR (내장 PP-OCRv5 korean, 첫 사용 시 모델 ~18MB 자동 다운로드 — OCR 필요 페이지만 인식)")
+  .option("--ocr-force", "전 페이지 강제 OCR (텍스트층이 있어도 무시하고 재인식)")
   .option("--dedupe-headers", "HWP5 레이아웃 표 페이지 반복 러닝 헤더 중복 제거 (기본 off — 붙임별 재번호 오삭제 주의)")
   .option("--keep-empty-cols", "표 오른쪽 끝 빈 열(서식 입력란) 보존 (#47, 기본 off: 후행 빈 열 트림)")
   .option("--inline-images", "이미지를 base64 data URI 로 마크다운에 인라인 (BMP→PNG 압축, HWP5 전용 — 인라인된 경우만 파일 미저장, 그 외 포맷은 저장 유지)")
@@ -63,6 +65,8 @@ program
         if (opts.pages) parseOptions.pages = opts.pages as string
         if (opts.headerFooter === false) parseOptions.removeHeaderFooter = false
         if (opts.formulaOcr) parseOptions.formulaOcr = true
+        if (opts.ocrForce) parseOptions.ocr = "force"
+        else if (opts.ocr) parseOptions.ocr = true
         if (opts.dedupeHeaders) parseOptions.dedupeRunningHeaders = true
         if (opts.keepEmptyCols) parseOptions.keepTrailingEmptyCols = true
         if (opts.inlineImages) parseOptions.inlineImages = true
@@ -963,6 +967,60 @@ program
       process.stdout.write("ok\n")
     } catch (err) {
       process.stderr.write(`[kordoc] 수식 모델 준비 실패: ${sanitizeError(err)}\n`)
+      process.exit(1)
+    }
+  })
+
+program
+  .command("check-ocr-models")
+  .description("텍스트 OCR 모델(PP-OCRv5 korean det+rec, ~18MB) 상태 확인 — 없거나 SHA 불일치면 다운로드")
+  .option("--status-only", "상태만 JSON 으로 출력 (다운로드 안 함)")
+  .action(async (opts) => {
+    try {
+      const { getOcrModelStatus, ensureOcrModels, getOcrModelsDir } = await import("./ocr/models.js")
+      const dir = getOcrModelsDir()
+      if (opts.statusOnly) {
+        const status = await getOcrModelStatus()
+        process.stdout.write(
+          JSON.stringify(
+            {
+              modelsDir: dir,
+              allReady: status.every((s) => s.verified),
+              models: status.map((s) => ({
+                name: s.spec.name,
+                filename: s.spec.filename,
+                sizeMb: s.spec.sizeMb,
+                exists: s.exists,
+                verified: s.verified,
+                invalidReason: s.invalidReason,
+                path: s.localPath,
+              })),
+            },
+            null,
+            2,
+          ) + "\n",
+        )
+        return
+      }
+      process.stderr.write(`[kordoc-ocr] 캐시 디렉토리: ${dir}\n`)
+      await ensureOcrModels((p) => {
+        if (p.phase === "download" && p.total) {
+          const pct = Math.floor((p.downloaded / p.total) * 100)
+          process.stderr.write(
+            `\r[kordoc-ocr] ${p.spec.name} ${pct}% (${(p.downloaded / 1024 / 1024).toFixed(1)}/${(p.total / 1024 / 1024).toFixed(1)}MB)`,
+          )
+          if (p.downloaded >= p.total) process.stderr.write("\n")
+        } else if (p.phase === "verify") {
+          process.stderr.write(`[kordoc-ocr] ${p.spec.name} SHA-256 검증 중...\n`)
+        } else if (p.phase === "done") {
+          process.stderr.write(`[kordoc-ocr] ${p.spec.name} 준비 완료\n`)
+        } else if (p.phase === "skip") {
+          process.stderr.write(`[kordoc-ocr] ${p.spec.name} 이미 존재 (skip)\n`)
+        }
+      })
+      process.stdout.write("ok\n")
+    } catch (err) {
+      process.stderr.write(`[kordoc] OCR 모델 준비 실패: ${sanitizeError(err)}\n`)
       process.exit(1)
     }
   })

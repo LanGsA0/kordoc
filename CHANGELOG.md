@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-07-17
+
+내장 텍스트 OCR 회차 — 스캔/이미지 PDF를 API 키 없이 로컬 추론으로 읽는다.
++ rhwp 업스트림 정합 3종 + 수식 OCR off-by-one 등 리뷰 확정 결함 수리.
+
+### Added
+
+- **내장 텍스트 OCR (PP-OCRv5 korean)**: `parse(buffer, { ocr: true })` /
+  CLI `--ocr`·`--ocr-force` / MCP `parse_document.ocr` — det(DBNet)+rec(SVTR/CTC)
+  ONNX 를 onnxruntime-node 로 로컬 추론. 모델 ~18MB(det 4.6+rec 12.8+사전)는
+  첫 사용 시 PaddlePaddle 공식 HF 리포에서 자동 다운로드+SHA-256 검증
+  (`~/.cache/kordoc/models/ppocr/`, Apache-2.0). 한국어 사전 11,945자(완성형
+  한글 11,172 음절 전량). `src/ocr/engine.ts`·`models.ts`·`pdf-ocr.ts` 신규,
+  `kordoc check-ocr-models` 커맨드 추가. 실측: 보도자료 스캔 1페이지 0.9s(M-series
+  CPU), 본문 conf 0.95+.
+  - **페이지 단위 정밀 적용**: 품질 신호(`needsOcr` — low_text·high_pua·
+    garbled_hangul 등)가 가리키는 페이지만 OCR 하고 정상 페이지 파싱 결과는
+    유지. 문서 전체가 이미지 기반이면 전 페이지. `"force"` 는 무조건 전 페이지.
+  - **스캔본 표 복원**: OCR 라인 박스를 PDF 포인트 좌표로 환산해 기존 블록
+    파이프라인(xy-cut 읽기 순서 + 클러스터 표 감지)에 태움 — 담당부서 표 등이
+    HTML 표로 복원된다.
+  - 기존 `OcrProvider` 콜백 계약은 유지 (외부 OCR 연동).
+
+### Fixed
+
+- **OCR 실행 판정과 품질 신호 분리 (리뷰 F1~F3)**: 종전에는 문서 평균 10자/페이지
+  미만일 때만 OCR 이 걸려 — ToUnicode 가 깨진(PUA·garbled_hangul) PDF 는 프로바이더가
+  있어도 호출되지 않았고, 혼합 문서(텍스트+스캔)의 스캔 페이지는 무음 손실,
+  진입 시 정상 페이지까지 통째로 OCR 결과로 대체됐다. 페이지 단위 선정·병합으로 전면 재설계.
+- **OCR 페이지 실패의 본문 오염 (F6/F7)**: 실패 마커("[OCR 실패: 페이지 N]")가
+  성공 마크다운으로 반환돼 RAG 청킹·redact·diff 에 유입되던 것 — 실패는
+  `OCR_FAILED` 경고 채널로, 환경 오류(의존성·모델 미설치)는 원인 메시지를 보존해
+  NEEDS_OCR 폴백. 텍스트 OCR 렌더를 pdfjs+node-canvas(미등재 의존성, F5)에서
+  **pdfium+sharp**(기존 optional 의존성)로 교체 — `src/ocr/provider.ts` 제거.
+- **수식 OCR 페이지 off-by-one**: `@hyzyla/pdfium` 의 `page.number` 는 **0-based
+  pageIndex** 인데 1-based pdfjs 블록·pageFilter 와 그대로 대조 — `--pages` 필터가
+  한 페이지 밀리고 수식이 이전 페이지 블록에 붙던 잠복 결함. 텍스트 OCR 계약
+  테스트로 함께 잠금.
+- **`qualitySummary` OCR 후 자기모순 (F14)**: OCR 적용 페이지가 여전히
+  `needsOcr`/`ocrCandidatePages` 로 보고되던 것 — `PageQuality.ocrApplied` 신설,
+  적용 페이지는 후보에서 제외.
+- **XLSX/XLS `keepTrailingEmptyCols` 배선 누락 (#47 후속)**: 옵션이 두 포맷에만
+  전달되지 않아 XLSX/XLS 양식의 빈 입력란 열 보존이 무음 무시되던 것.
+- **HWP3 rhwp 업스트림 정합 3종** (원저장소 후속 패치 반영):
+  - 탭(ch=9)은 8 byte 구조(hchar+탭폭+점끌기+닫기) — 2 byte 만 소비해 탭마다
+    6 byte 씩 어긋나 이후 텍스트가 오염되던 것 (rhwp d89b689 #929).
+  - ch=5(필드코드)·ch=6(책갈피) 스트림 소비 — 미소비 시 desync 로 이후 문단 전체
+    오염 (rhwp dcf64b4 #877, 업스트림 실측 77→1058 문단 복구).
+  - 사적 graphic char(0x0080~0x7FFF) 매핑 — 로마숫자 Ⅰ~Ⅹ("Ⅰ. 사업개요"),
+    원문자 ①~⑩, 좌우 큰따옴표, 화살표, □ 글머리 등이 통째로 증발하던 것.
+    kordoc 은 한컴 표시값을 직접 방출 (PUA 는 builder 가 제거하므로).
+    U+F03C5→□ 는 HWP5 공용 PUA 맵에도 추가.
+
 ## [4.1.0] - 2026-07-17
 
 프로덕션 전면 리뷰 회차 — 5축 병렬 감사(HWPX·PDF·바이너리·인터페이스·주변 모듈)로

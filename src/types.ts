@@ -151,8 +151,12 @@ export interface ParseOptions {
    * PDF: 정확한 페이지 단위. HWP/HWPX: 섹션 단위 근사치.
    */
   pages?: number[] | string
-  /** 이미지 기반 PDF용 OCR 프로바이더 (선택) */
-  ocr?: OcrProvider
+  /** 이미지 기반 PDF OCR (선택).
+   *  - `true`: 내장 엔진(PP-OCRv5 korean, ~18MB 자동 다운로드)으로 OCR 필요 판정
+   *    페이지만 인식 (스캔 페이지·글꼴 매핑 깨진 페이지). 정상 페이지는 파싱 결과 유지.
+   *  - `"force"`: 전 페이지를 내장 엔진으로 강제 OCR.
+   *  - 함수: 사용자 제공 OcrProvider (Claude Vision·Tesseract 등) — 판정은 `true`와 동일. */
+  ocr?: boolean | "force" | OcrProvider
   /** 진행률 콜백 — current: 현재 페이지/섹션, total: 전체 수 */
   onProgress?: (current: number, total: number) => void
   /** PDF 머리글/바닥글 자동 제거 */
@@ -223,6 +227,8 @@ export type WarningCode =
   | "PARTIAL_PARSE"
   | "LENIENT_CFB_RECOVERY"
   | "NEEDS_OCR"
+  | "OCR_FAILED"
+  | "OCR_APPLIED"
   | "COM_EMPTY"
   | "DRM_COM_FALLBACK"
 

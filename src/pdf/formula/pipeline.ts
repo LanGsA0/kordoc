@@ -194,24 +194,25 @@ export class FormulaPipeline {
     const doc: PDFiumDocument = await this.pdfium.loadDocument(view)
     try {
       const pages: PageFormulaResult[] = []
-      let pageIdx = 0
       for (const page of doc.pages()) {
-        pageIdx++
-        if (pageFilter && !pageFilter.has(page.number)) continue
+        // pdfium page.number 는 0-based pageIndex — pdfjs 블록/pageFilter 는 1-based.
+        // 환산 없이는 필터가 한 페이지 밀리고 수식이 이전 페이지 블록에 붙는다 (off-by-one).
+        const pageNo = page.number + 1
+        if (pageFilter && !pageFilter.has(pageNo)) continue
 
-        onPageProgress?.(page.number, doc.getPageCount())
+        onPageProgress?.(pageNo, doc.getPageCount())
 
         try {
           const result = await withTimeout(
-            this.processPage(page.number, page),
+            this.processPage(pageNo, page),
             this.opts.pageTimeoutMs,
-            `formula page ${page.number} timed out after ${this.opts.pageTimeoutMs}ms`,
+            `formula page ${pageNo} timed out after ${this.opts.pageTimeoutMs}ms`,
           )
           if (result) pages.push(result)
         } catch (e) {
           // 페이지 단위 실패는 조용히 넘어간다 — 전체 PDF 파싱 실패 방지.
           process.stderr.write(
-            `[kordoc-formula] page ${page.number} skipped: ${(e as Error).message}\n`,
+            `[kordoc-formula] page ${pageNo} skipped: ${(e as Error).message}\n`,
           )
         }
       }
@@ -314,6 +315,9 @@ async function tryImport<T>(name: string, loader: () => Promise<T>): Promise<T> 
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promise<T> {
+  // 타임아웃으로 race 가 끝난 뒤에도 원 promise 는 계속 실행된다 — 사후 reject 가
+  // unhandled rejection(Node 기본 정책: 프로세스 종료)이 되지 않게 흡수
+  promise.catch(() => {})
   let timer: NodeJS.Timeout | undefined
   try {
     return await Promise.race([

@@ -76,6 +76,7 @@ const SUPPLEMENTARY_MAP: Record<number, string> = {
   0xf00da: "▸", // ▸
   0xf080f: "━", // ━
   0xf0827: "■", // ■
+  0xf03c5: "□", // □ 글머리 — HWP3→HWP5 한컴 변환본 보존 코드, 한컴오피스 표시값 (rhwp #1105)
 }
 
 /** 단일 코드포인트 매핑 — 매핑 없으면 원본 유지 */

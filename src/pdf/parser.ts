@@ -78,8 +78,9 @@ async function loadPdfWithTimeout(buffer: ArrayBuffer) {
 
 export async function parsePdfDocument(buffer: ArrayBuffer, options?: ParseOptions): Promise<InternalParseResult> {
   // pdfjs-dist 는 전달받은 buffer 의 underlying storage 를 detach 할 수 있다.
-  // 수식 OCR 은 같은 버퍼를 재사용해야 하므로 옵션 on 일 때만 clone 을 보관.
+  // 수식/텍스트 OCR 은 같은 버퍼를 pdfium 으로 재사용해야 하므로 옵션 on 일 때만 clone 을 보관.
   const formulaBuffer: ArrayBuffer | null = options?.formulaOcr ? buffer.slice(0) : null
+  const ocrBuffer: ArrayBuffer | null = options?.ocr ? buffer.slice(0) : null
   const doc = await loadPdfWithTimeout(buffer)
 
   try {
@@ -196,22 +197,58 @@ export async function parsePdfDocument(buffer: ArrayBuffer, options?: ParseOptio
     }
 
     const parsedPageCount = parsedPages || (pageFilter ? pageFilter.size : effectivePageCount)
-    let isImageBased = false
-    if (totalChars / Math.max(parsedPageCount, 1) < 10) {
-      if (options?.ocr) {
-        try {
-          const { ocrPages } = await import("../ocr/provider.js")
-          const ocrBlocks = await ocrPages(doc, options.ocr, pageFilter, effectivePageCount)
-          if (ocrBlocks.length > 0) {
-            const ocrMarkdown = ocrBlocks.map(b => b.text || "").filter(Boolean).join("\n\n")
-            return { markdown: ocrMarkdown, blocks: ocrBlocks, metadata, warnings, isImageBased: true, pageQuality, qualitySummary: summarizeDocumentQuality(pageQuality), images: extractedImages.length > 0 ? extractedImages : undefined }
-          }
-        } catch {
-          // OCR 실패 시 일반 경로로 폴백 (아래에서 NEEDS_OCR 경고)
+    // 문서 단위 이미지 기반 판정 (평균 10자/페이지 미만 = 텍스트층 부재)
+    const isImageBased = totalChars / Math.max(parsedPageCount, 1) < 10
+
+    // ── OCR 실행 (옵션) — 페이지 단위 선정·병합 ──
+    // 대상: "force"=전 페이지 / 문서가 이미지 기반=전 페이지 /
+    //       그 외=품질 신호가 OCR 을 권하는 페이지만 (깨진 텍스트층 포함 — F1,
+    //       혼합 문서의 스캔 페이지 포함 — F2). 정상 페이지 파싱 결과는 유지 (F3).
+    const ocrDone = new Set<number>()
+    if (options?.ocr && ocrBuffer) {
+      const inScope = (p: number) => !pageFilter || pageFilter.has(p)
+      const targets = new Set<number>()
+      if (options.ocr === "force" || isImageBased) {
+        for (let i = 1; i <= effectivePageCount; i++) if (inScope(i)) targets.add(i)
+      } else {
+        for (const pq of pageQuality) {
+          if (!pq.needsOcr) continue
+          // low_text 는 빈 페이지(표지/간지)일 수 있으므로 큰 이미지가 있는 페이지만
+          if (pq.ocrReason === "low_text" && !pagesWithLargeImage.has(pq.page)) continue
+          targets.add(pq.page)
         }
       }
+      if (targets.size > 0) {
+        try {
+          const { runPdfOcr } = await import("../ocr/pdf-ocr.js")
+          const mode = typeof options.ocr === "function" ? options.ocr : ("builtin" as const)
+          const ocrPageBlocks = await runPdfOcr(ocrBuffer, targets, mode, warnings, options.onProgress)
+          if (ocrPageBlocks.size > 0) {
+            // 페이지 단위 교체: OCR 성공 페이지의 기존(깨진/빈) 블록 제거 후 병합
+            for (const p of ocrPageBlocks.keys()) ocrDone.add(p)
+            const merged = blocks.filter(b => !(b.pageNumber && ocrDone.has(b.pageNumber)))
+            for (const obs of ocrPageBlocks.values()) merged.push(...obs)
+            merged.sort((a, b) => (a.pageNumber ?? 0) - (b.pageNumber ?? 0)) // stable — 페이지 내 순서 보존
+            blocks.length = 0
+            blocks.push(...merged)
+            for (const pq of pageQuality) if (ocrDone.has(pq.page)) pq.ocrApplied = true
+            warnings.push({
+              message: `${ocrDone.size}개 페이지에 OCR 적용 (${mode === "builtin" ? "내장 PP-OCRv5" : "사용자 프로바이더"})`,
+              code: "OCR_APPLIED",
+            })
+          }
+        } catch (e) {
+          // 환경 오류(의존성·모델) — 아래 NEEDS_OCR 폴백이 가시화, 원인은 별도 경고로 보존 (F6)
+          warnings.push({
+            message: `OCR 실행 불가: ${e instanceof Error ? e.message : String(e)}`,
+            code: "OCR_FAILED",
+          })
+        }
+      }
+    }
+
+    if (isImageBased && ocrDone.size === 0) {
       // OCR 미설정/실패 — 빈 출력을 무경고로 내보내지 않고 경고 + 플래그로 가시화 (v3.0)
-      isImageBased = true
       warnings.push({
         message: `이미지 기반 PDF (${pageCount}페이지, 텍스트 ${totalChars}자) — 텍스트 레이어가 없어 OCR이 필요합니다`,
         code: "NEEDS_OCR",
@@ -220,6 +257,7 @@ export async function parsePdfDocument(buffer: ArrayBuffer, options?: ParseOptio
 
     // 페이지 단위 needsOcr 경고 — 텍스트+스캔 혼합 문서에서 스캔 페이지 무음 손실 방지.
     // low_text는 빈 페이지(표지/간지)일 수 있으므로 큰 이미지가 있는 페이지만 경고.
+    // OCR 이 적용된 페이지는 해소된 것이므로 제외.
     if (!isImageBased) {
       const OCR_REASON_MESSAGES: Record<string, string> = {
         low_text: "텍스트가 거의 없는 페이지 (스캔/이미지 추정)",
@@ -229,7 +267,7 @@ export async function parsePdfDocument(buffer: ArrayBuffer, options?: ParseOptio
         garbled_hangul: "글꼴 매핑 실패 (한글 자소 분포 이상) — 추출 텍스트가 깨졌을 수 있음",
       }
       for (const pq of pageQuality) {
-        if (!pq.needsOcr || !pq.ocrReason) continue
+        if (!pq.needsOcr || !pq.ocrReason || pq.ocrApplied) continue
         if (pq.ocrReason === "low_text" && !pagesWithLargeImage.has(pq.page)) continue
         warnings.push({ page: pq.page, message: `${OCR_REASON_MESSAGES[pq.ocrReason]} — OCR 검토 필요`, code: "NEEDS_OCR" })
       }

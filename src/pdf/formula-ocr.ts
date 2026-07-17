@@ -45,7 +45,11 @@ export async function applyFormulaOcr(
 
   const pipeline = await FormulaPipeline.create()
   try {
-    const pagesResult = await pipeline.runOnBuffer(buffer, pageFilter)
+    // MAX_PAGES 상한을 수식 OCR 에도 적용 — 필터 없으면 텍스트 추출과 같은 범위만
+    // (없으면 대형 PDF 에서 상한 밖 페이지까지 ONNX 추론 + 결과가 문서 끝에 오배치)
+    const effectiveFilter = pageFilter
+      ?? new Set(Array.from({ length: effectivePageCount }, (_, i) => i + 1))
+    const pagesResult = await pipeline.runOnBuffer(buffer, effectiveFilter)
 
     if (pagesResult.length === 0) return
 

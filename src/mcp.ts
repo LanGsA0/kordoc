@@ -146,8 +146,10 @@ server.tool(
   "한국 문서 파일(HWP, HWPX, PDF, XLSX, DOCX)을 마크다운으로 변환합니다. 파일 경로를 입력하면 포맷을 자동 감지하여 텍스트를 추출합니다.",
   {
     file_path: z.string().min(1).describe("파싱할 문서 파일의 절대 경로 (HWP, HWPX, PDF, XLSX, DOCX)"),
+    ocr: z.boolean().optional()
+      .describe("스캔/이미지 PDF 텍스트 OCR (내장 PP-OCRv5 korean, 첫 사용 시 ~18MB 자동 다운로드). 텍스트층이 없거나 깨진 페이지만 인식하고 정상 페이지는 그대로 둡니다. parse 결과에 NEEDS_OCR 경고가 있으면 이 옵션으로 재시도하세요"),
   },
-  async ({ file_path }) => {
+  async ({ file_path, ocr }) => {
     try {
       const { buffer, resolved } = readValidatedFile(file_path)
       const format = detectFormat(buffer)
@@ -164,7 +166,7 @@ server.tool(
       // 만으로 클라이언트 도구 응답 한도(Claude Code 기본 25k 토큰)를 넘겨 호출 자체가
       // 깨진다(v3.18.0 회귀). 자체 완결형 마크다운이 필요하면 CLI `--inline-images`.
       // filePath 전달 — 배포용 HWP의 COM fallback에 필요 (CLI와 동일)
-      const result = await parse(buffer, { filePath: resolved })
+      const result = await parse(buffer, { filePath: resolved, ...(ocr ? { ocr: true } : {}) })
 
       if (!result.success) {
         return {
@@ -180,7 +182,9 @@ server.tool(
         result.pageCount ? `페이지: ${result.pageCount}` : null,
         result.metadata?.title ? `제목: ${result.metadata.title}` : null,
         result.metadata?.author ? `작성자: ${result.metadata.author}` : null,
-        result.isImageBased ? "이미지 기반 PDF (텍스트 추출 불가)" : null,
+        result.isImageBased
+          ? (result.warnings?.some(w => w.code === "OCR_APPLIED") ? "이미지 기반 PDF (OCR 적용)" : "이미지 기반 PDF (텍스트 추출 불가 — ocr: true 로 재시도 가능)")
+          : null,
       ].filter(Boolean).join(" | ")
 
       // outline/warnings 부가 정보 추가

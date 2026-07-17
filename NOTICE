@@ -131,6 +131,30 @@ https://opensource.org/licenses/MIT
 
 ================================================================================
 
+PaddleOCR / PP-OCRv5 — Text Detection & Recognition Models
+https://github.com/PaddlePaddle/PaddleOCR
+
+Copyright PaddlePaddle Authors
+Licensed under the Apache License, Version 2.0
+
+Model weights (ONNX conversions, downloaded at runtime with SHA-256 verification,
+not redistributed with this package):
+- PP-OCRv5_mobile_det (HuggingFace `PaddlePaddle/PP-OCRv5_mobile_det_onnx`)
+- korean_PP-OCRv5_mobile_rec + character dictionary
+  (HuggingFace `PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx`)
+
+Used in:
+- src/ocr/engine.ts — DBNet det pre/post-processing (resize_long 960, thresh/
+  box_thresh/unclip per official inference.yml; DB unclip approximated with
+  axis-aligned component boxes) + CTC greedy decoding, following the PaddleOCR
+  inference operator specifications. Original TypeScript implementation.
+- src/ocr/models.ts — model specs + inference.yml character_dict parser
+
+You may obtain a copy of the Apache License 2.0 at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+
 claw-hwp
 https://github.com/DoHyun468/claw-hwp
 

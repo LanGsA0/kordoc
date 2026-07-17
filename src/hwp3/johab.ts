@@ -71,9 +71,42 @@ export function decodeJohab(ch: number): number {
     // 한자/기호: lookup table
     const hit = lookupSymbol(ch)
     if (hit !== null) return hit
+    return JOHAB_UNMAPPED
   }
 
-  return JOHAB_UNMAPPED
+  // 사적 graphic char 영역 (0x0080~0x7FFF) — rhwp decode_hwp3_extra 포팅
+  // (HWP3↔한컴 HWP5 변환본 cross-ref로 도출된 매핑, rhwp e184718~aa8b47c).
+  return decodeHwp3Extra(ch)
+}
+
+/**
+ * HWP3 사적 graphic char (0x0080~0x7FFF) → 유니코드. 매핑 없으면 JOHAB_UNMAPPED.
+ *
+ * rhwp 는 한컴 PUA(U+F03C5 등)를 보존하고 렌더러가 표시값으로 확장하지만,
+ * kordoc 은 렌더러 없이 markdown 으로 직행하므로 한컴오피스 표시값을 직접
+ * 방출한다 (미매핑 Supplementary PUA 는 builder.sanitizeText 가 제거하므로
+ * PUA 방출은 글자 증발로 이어짐). 관계도 선문자(0x301E/0x3024/0x3027)는
+ * 표준 근사가 없어 미매핑 유지.
+ */
+function decodeHwp3Extra(ch: number): number {
+  // 로마숫자 대문자 Ⅰ~Ⅹ ("Ⅰ. 사업개요" 류 장 제목)
+  if (ch >= 0x3590 && ch <= 0x3599) return 0x2160 + (ch - 0x3590)
+  // 원문자 ①~⑩
+  if (ch >= 0x36e7 && ch <= 0x36f0) return 0x2460 + (ch - 0x36e7)
+  switch (ch) {
+    case 0x0081: return 0x201c // 왼쪽 큰따옴표
+    case 0x0082: return 0x201d // 오른쪽 큰따옴표
+    case 0x301c: return 0x2501 // ━ 굵은 가로선 (rhwp: U+F080F, 표시값 직행)
+    case 0x303d: return 0x25a0 // ■ (rhwp: U+F0827, 표시값 직행)
+    case 0x3366: return 0x25a1 // □ 글머리 (rhwp: U+F03C5, 한컴 표시값 직행)
+    case 0x3404: return 0x2024 // 한 점 리더
+    case 0x3441: return 0x25a0 // ■
+    case 0x3446: return 0x2192 // → 오른쪽 화살표
+    case 0x35e1: return 0x2500 // ─ 상자 그리기 가로선
+    case 0x3479: return 0x25b7 // ▷
+    case 0x347a: return 0x25b6 // ▶
+    default: return JOHAB_UNMAPPED
+  }
 }
 
 /**
